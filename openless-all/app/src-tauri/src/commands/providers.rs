@@ -37,6 +37,14 @@ pub async fn list_provider_models(kind: String) -> Result<ProviderModelsResult, 
             models: vec![crate::asr::bailian::DEFAULT_MODEL.to_string()],
         });
     }
+    if kind == "asr" && CredentialsVault::get_active_asr() == crate::asr::soniox::PROVIDER_ID {
+        // Soniox 实时 ASR 也没有模型列表 HTTP 接口；与 Bailian 对齐：先跑一次与
+        // 「验证」相同的 WebSocket 连通性检查，再返回静态模型列表。
+        validate_soniox_asr_provider().await?;
+        return Ok(ProviderModelsResult {
+            models: vec![crate::asr::soniox::DEFAULT_MODEL.to_string()],
+        });
+    }
     if kind == "asr" && CredentialsVault::get_active_asr() == crate::asr::mimo::PROVIDER_ID {
         return Ok(ProviderModelsResult {
             models: vec![crate::asr::mimo::DEFAULT_MODEL.to_string()],
@@ -192,6 +200,9 @@ async fn validate_asr_provider() -> Result<(), String> {
     if active_asr == crate::asr::bailian::PROVIDER_ID {
         return validate_bailian_asr_provider().await;
     }
+    if active_asr == crate::asr::soniox::PROVIDER_ID {
+        return validate_soniox_asr_provider().await;
+    }
     if active_asr == crate::asr::mimo::PROVIDER_ID {
         return validate_mimo_asr_provider().await;
     }
@@ -262,6 +273,47 @@ async fn validate_bailian_asr_provider() -> Result<(), String> {
     crate::asr::AudioConsumer::consume_pcm_chunk(
         &*asr,
         &vec![0u8; crate::asr::bailian::TARGET_AUDIO_CHUNK_BYTES * 5],
+    );
+    asr.send_last_frame().await.map_err(|e| e.to_string())?;
+    asr.await_final_result()
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+async fn validate_soniox_asr_provider() -> Result<(), String> {
+    let api_key = CredentialsVault::get(CredentialAccount::AsrApiKey)
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+    if api_key.trim().is_empty() {
+        return Err("API Key 为空".to_string());
+    }
+    let endpoint = CredentialsVault::get(CredentialAccount::AsrEndpoint)
+        .map_err(|e| e.to_string())?
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| crate::asr::soniox::DEFAULT_ENDPOINT.to_string());
+    // 协议头先行校验：把 https:// 地址粘进来时 WebSocket 握手会失败，底层报错对
+    // 用户不可读。与 Bailian 同形，拦下并返回 sonioxEndpointSchemeInvalid 错误码。
+    if !crate::asr::soniox::endpoint_scheme_is_websocket(&endpoint) {
+        return Err("sonioxEndpointSchemeInvalid".to_string());
+    }
+    let model = CredentialsVault::get(CredentialAccount::AsrModel)
+        .map_err(|e| e.to_string())?
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| crate::asr::soniox::DEFAULT_MODEL.to_string());
+    let asr = std::sync::Arc::new(crate::asr::SonioxStreamingASR::new(
+        crate::asr::soniox::SonioxCredentials {
+            api_key,
+            endpoint,
+            model,
+            terms: Vec::new(),
+        },
+    ));
+    asr.open_session().await.map_err(|e| e.to_string())?;
+    // 与 Bailian 对齐：验证音频取 500ms（5 × 100ms chunk）静音，留余量。
+    crate::asr::AudioConsumer::consume_pcm_chunk(
+        &*asr,
+        &vec![0u8; crate::asr::soniox::TARGET_AUDIO_CHUNK_BYTES * 5],
     );
     asr.send_last_frame().await.map_err(|e| e.to_string())?;
     asr.await_final_result()

@@ -155,6 +155,9 @@ const ASR_DEFAULT_RESOURCE_ID = 'volc.seedasr.sauc.duration';
 const ASR_PRESETS: ReadonlyArray<{ id: AsrPresetId; nameKey: string; baseUrl: string; model: string }> = [
   { id: 'volcengine',   nameKey: 'asrVolcengine',   baseUrl: '',                                              model: ''                              },
   { id: 'bailian',      nameKey: 'asrBailian',     baseUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference/', model: 'fun-asr-realtime'             },
+  // Soniox 实时 ASR 走 Soniox WebSocket 网关（wss://stt-rt.soniox.com），不是
+  // Whisper /audio/transcriptions；后端由 asr/soniox.rs 专用流式 client 处理。
+  { id: 'soniox',       nameKey: 'asrSoniox',      baseUrl: 'wss://stt-rt.soniox.com/transcribe-websocket',     model: 'stt-rt-v5'                    },
   { id: 'siliconflow',  nameKey: 'asrSiliconflow',  baseUrl: 'https://api.siliconflow.cn/v1',                  model: 'FunAudioLLM/SenseVoiceSmall' },
   { id: 'zhipu',        nameKey: 'asrZhipu',        baseUrl: 'https://open.bigmodel.cn/api/paas/v4',           model: 'glm-asr-2512'                },
   { id: 'groq',         nameKey: 'asrGroq',         baseUrl: 'https://api.groq.com/openai/v1',                 model: 'whisper-large-v3-turbo'      },
@@ -622,6 +625,7 @@ function providerErrorMessage(error: unknown, t: ReturnType<typeof useTranslatio
   if (message === 'endpointMustUseHttps') return t('settings.providers.endpointMustUseHttps');
   if (message === 'endpointInvalid') return t('settings.providers.endpointInvalid');
   if (message === 'bailianEndpointSchemeInvalid') return t('settings.providers.bailianEndpointSchemeInvalid');
+  if (message === 'sonioxEndpointSchemeInvalid') return t('settings.providers.sonioxEndpointSchemeInvalid');
   if (message === 'providerResponseTooLarge') return t('settings.providers.responseTooLarge');
   if (message === 'asrInvalidJson') return t('settings.providers.asrInvalidJson');
   if (message === 'asrMissingTextField') return t('settings.providers.asrMissingTextField');

@@ -107,6 +107,7 @@ pub(super) fn ensure_asr_credentials() -> Result<(), String> {
     if is_whisper_compatible_provider(&active_asr)
         || is_bailian_provider(&active_asr)
         || is_mimo_provider(&active_asr)
+        || is_soniox_provider(&active_asr)
     {
         let api_key = CredentialsVault::get(CredentialAccount::AsrApiKey)
             .ok()
@@ -355,6 +356,10 @@ pub(super) fn is_mimo_provider(id: &str) -> bool {
     id == crate::asr::mimo::PROVIDER_ID
 }
 
+pub(super) fn is_soniox_provider(id: &str) -> bool {
+    id == crate::asr::soniox::PROVIDER_ID
+}
+
 pub(super) fn apply_chinese_script_preference(text: &str, pref: ChineseScriptPreference) -> String {
     if text.is_empty() {
         return String::new();
@@ -385,6 +390,10 @@ pub(super) enum QaAsrStart {
         asr: Arc<BailianRealtimeASR>,
         bridge: Arc<DeferredAsrBridge>,
     },
+    Soniox {
+        asr: Arc<SonioxStreamingASR>,
+        bridge: Arc<DeferredAsrBridge>,
+    },
     Ready {
         active: ActiveAsr,
         consumer: Arc<dyn crate::recorder::AudioConsumer>,
@@ -396,6 +405,7 @@ impl QaAsrStart {
         match self {
             QaAsrStart::Volcengine { asr, .. } => ActiveAsr::Volcengine(Arc::clone(asr)),
             QaAsrStart::Bailian { asr, .. } => ActiveAsr::Bailian(Arc::clone(asr)),
+            QaAsrStart::Soniox { asr, .. } => ActiveAsr::Soniox(Arc::clone(asr)),
             QaAsrStart::Ready { active, .. } => active.clone(),
         }
     }
@@ -404,6 +414,7 @@ impl QaAsrStart {
         match self {
             QaAsrStart::Volcengine { bridge, .. } => Arc::clone(bridge) as _,
             QaAsrStart::Bailian { bridge, .. } => Arc::clone(bridge) as _,
+            QaAsrStart::Soniox { bridge, .. } => Arc::clone(bridge) as _,
             QaAsrStart::Ready { consumer, .. } => Arc::clone(consumer),
         }
     }
@@ -423,6 +434,15 @@ impl QaAsrStart {
                 let flushed = bridge.attach(target);
                 log::info!(
                     "[coord] QA Bailian ASR connected; flushed {flushed} deferred audio bytes"
+                );
+                Ok(())
+            }
+            QaAsrStart::Soniox { asr, bridge } => {
+                asr.open_session().await.map_err(|e| e.to_string())?;
+                let target: Arc<dyn crate::asr::AudioConsumer> = Arc::clone(asr) as _;
+                let flushed = bridge.attach(target);
+                log::info!(
+                    "[coord] QA Soniox ASR connected; flushed {flushed} deferred audio bytes"
                 );
                 Ok(())
             }
@@ -515,6 +535,14 @@ pub(super) async fn build_qa_asr_start(inner: &Arc<Inner>, active_asr: &str) -> 
             asr: Arc::new(BailianRealtimeASR::new(read_bailian_credentials())),
             bridge: Arc::new(DeferredAsrBridge::new()),
         }),
+        ActiveAsrProviderKind::Soniox => {
+            let mut creds = read_soniox_credentials();
+            creds.terms = enabled_phrases(inner);
+            Ok(QaAsrStart::Soniox {
+                asr: Arc::new(SonioxStreamingASR::new(creds)),
+                bridge: Arc::new(DeferredAsrBridge::new()),
+            })
+        }
         ActiveAsrProviderKind::Mimo => {
             let (api_key, base_url, model) = read_mimo_credentials();
             let mimo = Arc::new(MimoBatchASR::new(api_key, base_url, model));

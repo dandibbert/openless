@@ -26,7 +26,8 @@ use crate::asr::local::{
 };
 use crate::asr::{
     BailianCredentials, BailianRealtimeASR, DictionaryHotword, MimoBatchASR, RawTranscript,
-    VolcengineCredentials, VolcengineStreamingASR, WhisperBatchASR,
+    SonioxCredentials, SonioxStreamingASR, VolcengineCredentials, VolcengineStreamingASR,
+    WhisperBatchASR,
 };
 use crate::combo_hotkey::{ComboHotkeyError, ComboHotkeyEvent, ComboHotkeyMonitor};
 use crate::coordinator_state::{
@@ -180,6 +181,7 @@ enum ActiveAsr {
     Whisper(Arc<WhisperBatchASR>),
     Mimo(Arc<MimoBatchASR>),
     Bailian(Arc<BailianRealtimeASR>),
+    Soniox(Arc<SonioxStreamingASR>),
     #[cfg(target_os = "windows")]
     FoundryLocalWhisper(Arc<FoundryLocalWhisperAsr>),
     /// Windows sherpa-onnx 本地 ASR（offline batch + 实验 online streaming）。
@@ -211,6 +213,7 @@ enum ActiveAsrProviderKind {
     Mimo,
     WhisperCompatible,
     Volcengine,
+    Soniox,
 }
 
 fn active_asr_provider_kind(id: &str) -> ActiveAsrProviderKind {
@@ -218,6 +221,8 @@ fn active_asr_provider_kind(id: &str) -> ActiveAsrProviderKind {
         ActiveAsrProviderKind::Bailian
     } else if is_mimo_provider(id) {
         ActiveAsrProviderKind::Mimo
+    } else if is_soniox_provider(id) {
+        ActiveAsrProviderKind::Soniox
     } else if is_whisper_compatible_provider(id) {
         ActiveAsrProviderKind::WhisperCompatible
     } else {
@@ -1566,6 +1571,13 @@ impl Coordinator {
                     .map_err(|_| "重新转录超时".to_string())?
                     .map_err(|e| e.to_string())?
             }
+            ActiveAsr::Soniox(asr) => {
+                asr.send_last_frame().await.map_err(|e| e.to_string())?;
+                tokio::time::timeout(timeout, asr.await_final_result())
+                    .await
+                    .map_err(|_| "重新转录超时".to_string())?
+                    .map_err(|e| e.to_string())?
+            }
             ActiveAsr::Whisper(w) => tokio::time::timeout(timeout, w.transcribe())
                 .await
                 .map_err(|_| "重新转录超时".to_string())?
@@ -2010,6 +2022,29 @@ fn read_volc_credentials() -> VolcengineCredentials {
     }
 }
 
+fn read_soniox_credentials() -> SonioxCredentials {
+    let api_key = CredentialsVault::get(CredentialAccount::AsrApiKey)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let endpoint = CredentialsVault::get(CredentialAccount::AsrEndpoint)
+        .ok()
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| crate::asr::soniox::DEFAULT_ENDPOINT.to_string());
+    let model = CredentialsVault::get(CredentialAccount::AsrModel)
+        .ok()
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| crate::asr::soniox::DEFAULT_MODEL.to_string());
+    SonioxCredentials {
+        api_key,
+        endpoint,
+        model,
+        terms: Vec::new(),
+    }
+}
+
 fn enabled_hotwords(inner: &Arc<Inner>) -> Vec<DictionaryHotword> {
     inner
         .vocab
@@ -2346,6 +2381,10 @@ mod tests {
         assert_eq!(
             active_asr_provider_kind(crate::asr::mimo::PROVIDER_ID),
             ActiveAsrProviderKind::Mimo
+        );
+        assert_eq!(
+            active_asr_provider_kind(crate::asr::soniox::PROVIDER_ID),
+            ActiveAsrProviderKind::Soniox
         );
         assert_eq!(
             active_asr_provider_kind("volcengine"),
