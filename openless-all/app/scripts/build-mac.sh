@@ -17,9 +17,9 @@ INFO="$APP/Contents/Info.plist"
 DMG_DIR="src-tauri/target/release/bundle/dmg"
 INSTALL="${INSTALL:-1}"
 
+ADHOC_MLX_SIGN=0
 if [ -z "${APPLE_CERTIFICATE:-}" ] && [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
-  export APPLE_SIGNING_IDENTITY="-"
-  echo "▶ 未检测到 Apple 签名证书，使用 ad-hoc 签名（下载分发仍会触发 Gatekeeper）"
+  echo "▶ 未检测到 Apple 签名证书：Apple Silicon 由打包后脚本做 ad-hoc 签名（含 mlx.metallib）"
 else
   echo "▶ 检测到 Apple 签名环境，交给 Tauri 做 Developer ID 签名 / 公证"
 fi
@@ -41,6 +41,13 @@ case "$(uname -m)" in
   arm64)
     MAC_BUNDLE_ARCH="aarch64"
     TAURI_BUILD_ARGS+=(--config src-tauri/tauri.macos-mlx.conf.json)
+    # Tauri copies mlx.metallib into Contents/MacOS/ but does not sign it.
+    # Forcing APPLE_SIGNING_IDENTITY="-" makes the bundler ad-hoc-sign the app
+    # and fail with "code object is not signed at all" on that nested file.
+    # Leave the identity unset so Tauri skips codesign; we sign after bundle.
+    if [ -z "${APPLE_CERTIFICATE:-}" ] && [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+      ADHOC_MLX_SIGN=1
+    fi
     ;;
   x86_64)
     MAC_BUNDLE_ARCH="x64"
@@ -50,6 +57,9 @@ case "$(uname -m)" in
     exit 1
     ;;
 esac
+if [ "$ADHOC_MLX_SIGN" != "1" ] && [ -z "${APPLE_CERTIFICATE:-}" ] && [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+  export APPLE_SIGNING_IDENTITY="-"
+fi
 if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ] || [ -n "${TAURI_SIGNING_PRIVATE_KEY_PATH:-}" ]; then
   TAURI_BUILD_ARGS+=(--config '{"bundle":{"createUpdaterArtifacts":true}}')
 fi
@@ -57,6 +67,11 @@ npm run tauri -- "${TAURI_BUILD_ARGS[@]}"
 
 APP_VERSION="$(node -p "require('./package.json').version")"
 DMG_PATH="$DMG_DIR/OpenLess_${APP_VERSION}_${MAC_BUNDLE_ARCH}.dmg"
+
+if [ "$ADHOC_MLX_SIGN" = "1" ]; then
+  echo "▶ ad-hoc 补签 mlx.metallib / .app 并重打 DMG"
+  bash scripts/sign-macos-adhoc-mlx-bundle.sh "$APP" "$DMG_PATH"
+fi
 
 echo "▶ 校验 Info.plist / 签名"
 /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$INFO" >/dev/null

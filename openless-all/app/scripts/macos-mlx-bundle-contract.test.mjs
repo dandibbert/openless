@@ -18,10 +18,17 @@ assert.equal(
   "target/release/openless-mlx/mlx.metallib",
 )
 assert.match(buildScript, /arm64\)[\s\S]*tauri\.macos-mlx\.conf\.json/)
+assert.match(buildScript, /sign-macos-adhoc-mlx-bundle\.sh/)
 assert.doesNotMatch(buildScript, /--bundles app/)
 assert.doesNotMatch(buildScript, /codesign --force/)
 assert.doesNotMatch(buildScript, /hdiutil create/)
 assert.match(buildScript, /OpenLess\.app\.tar\.gz/)
 assert.match(buildScript, /stapler validate/)
+
+const adhocScript = readFileSync(resolve(appRoot, "scripts/sign-macos-adhoc-mlx-bundle.sh"), "utf8")
+assert.match(adhocScript, /Contents\/MacOS\/mlx\.metallib/)
+assert.match(adhocScript, /codesign --force --sign/)
+assert.match(adhocScript, /hdiutil create/)
+assert.doesNotMatch(adhocScript, /codesign --force --deep/)
 
 console.log("macOS MLX bundle contract tests passed")
