@@ -15,8 +15,8 @@ import { useConservativeLayout, useLayoutStack } from '../../lib/useMobileLayout
 import { btnGhostStyle, SectionTitle } from './shared';
 import { CheckUpdateButton } from './CheckUpdateButton';
 
-const HELP_URL = 'https://github.com/Open-Less/openless#readme';
-const RELEASE_NOTES_URL = 'https://github.com/Open-Less/openless/releases';
+const HELP_URL = 'https://github.com/dandibbert/openless#readme';
+const RELEASE_NOTES_URL = 'https://github.com/dandibbert/openless/releases';
 
 export function AboutSection() {
   const { t } = useTranslation();
@@ -94,7 +94,7 @@ export function AboutSection() {
       <Card>
         <SectionTitle>{t('settings.about.linksTitle')}</SectionTitle>
         <Row label={t('modal.about.source')}>
-          <button style={btnGhostStyle} onClick={() => openExternal('https://github.com/Open-Less/openless')}>
+          <button style={btnGhostStyle} onClick={() => openExternal('https://github.com/dandibbert/openless')}>
             GitHub
           </button>
         </Row>
@@ -114,7 +114,7 @@ export function AboutSection() {
           </button>
         </Row>
         <Row label={t('modal.about.feedback')}>
-          <button style={btnGhostStyle} onClick={() => openExternal('https://github.com/Open-Less/openless/issues')}>
+          <button style={btnGhostStyle} onClick={() => openExternal('https://github.com/dandibbert/openless/issues')}>
             {t('modal.about.feedbackBtn')}
           </button>
         </Row>

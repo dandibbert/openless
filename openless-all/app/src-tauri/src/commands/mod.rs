@@ -1403,7 +1403,7 @@ mod tests {
         assert_eq!(got.tag_name, "v1.2.24-2-beta-tauri");
         assert_eq!(
             got.html_url,
-            "https://github.com/Open-Less/openless/releases/tag/v1.2.24-2-beta-tauri"
+            "https://github.com/dandibbert/openless/releases/tag/v1.2.24-2-beta-tauri"
         );
         assert_eq!(got.published_at, "2026-05-08T01:27:23Z");
     }
