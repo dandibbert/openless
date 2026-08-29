@@ -39,4 +39,18 @@ assert.ok(
   'PR CI must cancel superseded pull-request runs without cancelling branch pushes',
 );
 
+for (const [name, source] of [
+  ['Android release', workflows.android],
+  ['Tauri release', workflows.tauriRelease],
+]) {
+  assert.ok(
+    !source.includes('TAURI_SIGNING_PRIVATE_KEY is required'),
+    `${name} workflow must not abort tag releases when this fork lacks TAURI_SIGNING_PRIVATE_KEY`,
+  );
+  assert.ok(
+    source.includes('TAURI_SIGNING_PRIVATE_KEY is not configured'),
+    `${name} workflow must warn and continue when TAURI_SIGNING_PRIVATE_KEY is missing`,
+  );
+}
+
 console.log('workflow-concurrency-contract.test.mjs passed');

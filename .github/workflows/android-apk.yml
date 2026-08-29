@@ -62,11 +62,17 @@ jobs:
             fi
           done
 
-          if $is_tag; then
+          if $is_tag && $has_keystore; then
             echo "mode=release" >> "$GITHUB_OUTPUT"
             echo "label=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
             echo "signing=tag-release" >> "$GITHUB_OUTPUT"
             echo "signing_label=Tag release with release keystore" >> "$GITHUB_OUTPUT"
+          elif $is_tag; then
+            echo "mode=debug" >> "$GITHUB_OUTPUT"
+            echo "label=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "signing=debug-fallback" >> "$GITHUB_OUTPUT"
+            echo "signing_label=Unsigned debug fallback (tag release without keystore secrets)" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Unsigned debug APK::ANDROID_KEYSTORE_* secrets are not configured. Tag release will attach debug APKs; overlay install and user data preservation require the release keystore."
           elif $has_keystore; then
             echo "mode=release" >> "$GITHUB_OUTPUT"
             echo "label=dispatch-run-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
@@ -87,8 +93,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-            echo "::error::TAURI_SIGNING_PRIVATE_KEY is required for signed Android release artifacts."
-            exit 1
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not configured. Android APKs will still be published; minisign signatures and updater manifests will be skipped."
           fi
 
       - name: Check Android keystore secrets (tag release)
@@ -107,9 +112,7 @@ jobs:
             fi
           done
           if [ "${#missing[@]}" -gt 0 ]; then
-            echo "::error::Android release signing secrets are required for tag builds: ${missing[*]}"
-            echo "::error::Configure ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD in repo secrets."
-            exit 1
+            echo "::warning::Android release signing secrets are missing (${missing[*]}). Tag release will attach debug APKs instead of a signed release build."
           fi
 
       - name: Setup Java 17 (Zulu)
@@ -330,7 +333,7 @@ jobs:
           PY
 
       - name: Sign release APKs (minisign)
-        if: steps.mode.outputs.is_tag_release == 'true'
+        if: steps.mode.outputs.is_tag_release == 'true' && env.TAURI_SIGNING_PRIVATE_KEY != ''
         working-directory: openless-all/app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -344,7 +347,7 @@ jobs:
             "${{ steps.apk.outputs.x86_64_path }}"
 
       - name: Write Android updater manifests
-        if: steps.mode.outputs.is_tag_release == 'true'
+        if: steps.mode.outputs.is_tag_release == 'true' && env.TAURI_SIGNING_PRIVATE_KEY != ''
         working-directory: openless-all/app
         env:
           OPENLESS_UPDATE_APK_DIR: ${{ steps.apk.outputs.out_dir }}

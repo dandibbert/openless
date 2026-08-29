@@ -123,8 +123,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-            echo "::error::TAURI_SIGNING_PRIVATE_KEY is required for signed auto-update artifacts."
-            exit 1
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not configured. Publishing unsigned installers; auto-update artifacts and manifests will be skipped."
           fi
 
       - name: Check Apple signing availability
@@ -660,6 +659,10 @@ jobs:
         shell: bash
         run: |
           cat > "$RUNNER_TEMP/release-body.md" << 'EOF'
+          ### 本 fork 发版说明
+
+          仓库未配置 `TAURI_SIGNING_PRIVATE_KEY` 时，本流水线会继续发布各平台安装包，但**不会**生成 updater 签名 / `latest-*-beta.json`。应用内「检查更新」因此不可用，请从本 Release 页面手动下载。配置该密钥后，后续 tag 会恢复签名自动更新。
+
           ### macOS 用户首次安装提示
 
           下载 DMG 拖入 `/Applications` 后，**必须**在终端运行：
