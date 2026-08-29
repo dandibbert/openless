@@ -83,14 +83,18 @@ pub fn get_windows_ime_status() -> WindowsImeStatus {
 
 #[tauri::command]
 #[cfg(mobile)]
-pub fn list_microphone_devices() -> Result<Vec<crate::recorder::MicrophoneDevice>, String> {
+pub async fn list_microphone_devices() -> Result<Vec<crate::recorder::MicrophoneDevice>, String> {
     Ok(Vec::new())
 }
 
 #[tauri::command]
 #[cfg(not(mobile))]
-pub fn list_microphone_devices() -> Result<Vec<crate::recorder::MicrophoneDevice>, String> {
-    crate::recorder::list_input_devices().map_err(|e| e.to_string())
+pub async fn list_microphone_devices() -> Result<Vec<crate::recorder::MicrophoneDevice>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        crate::recorder::list_input_devices().map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("microphone device worker failed: {e}"))?
 }
 
 #[tauri::command]
@@ -156,15 +160,99 @@ pub async fn stop_microphone_level_monitor(app: AppHandle) {
 /// 把当前会话的 openless.log 复制到用户选择的位置（前端用 plugin-dialog 拿 target_path）。
 /// 路径来自 lib::log_dir_path() —— mac: ~/Library/Logs/OpenLess/openless.log，
 /// windows: %LOCALAPPDATA%\OpenLess\Logs\openless.log。
+///
+/// Android 上 dialog 返回 `content://` URI，不能用 `std::fs::copy`；走 JNI
+/// ContentResolver 写入，避免 tauri-plugin-fs detachFd 导致 0 字节文件。
 #[tauri::command]
 pub fn export_error_log(target_path: String) -> Result<(), String> {
-    let src = crate::log_dir_path().join("openless.log");
-    if !src.exists() {
-        return Err(format!("日志文件不存在：{}", src.display()));
+    let src = resolve_openless_log_path()?;
+
+    #[cfg(target_os = "android")]
+    {
+        if target_path.starts_with("content://") {
+            let bytes = std::fs::read(&src).map_err(|e| format!("读取日志失败：{e}"))?;
+            return crate::android::jni::android::write_content_uri(&target_path, &bytes)
+                .map_err(|e| format!("复制日志失败：{e}"));
+        }
+        let path = target_path
+            .strip_prefix("file://")
+            .unwrap_or(target_path.as_str());
+        return std::fs::copy(&src, std::path::Path::new(path))
+            .map(|_| ())
+            .map_err(|e| format!("复制日志失败：{e}"));
     }
-    std::fs::copy(&src, std::path::Path::new(&target_path))
-        .map(|_| ())
-        .map_err(|e| format!("复制日志失败：{}", e))
+
+    #[cfg(not(target_os = "android"))]
+    {
+        std::fs::copy(&src, std::path::Path::new(&target_path))
+            .map(|_| ())
+            .map_err(|e| format!("复制日志失败：{e}"))
+    }
+}
+
+fn resolve_openless_log_path() -> Result<std::path::PathBuf, String> {
+    let mut candidates = Vec::new();
+    #[cfg(target_os = "android")]
+    {
+        candidates.extend(crate::persistence::android_openless_log_candidates());
+    }
+    candidates.push(crate::log_dir_path().join("openless.log"));
+
+    if let Some(src) = candidates.iter().find(|path| path.exists()) {
+        return Ok(src.clone());
+    }
+    let tried = candidates
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!("日志文件不存在（已尝试：{tried}）"))
+}
+
+// ─────────────────────────── cursor context (debug only) ───────────────────────────
+
+/// 探一次「宿主 app 光标周围的正文」，把结果原样交给调用方。
+///
+/// **调试用，不接任何产品链路**（里程碑 1 的产物就是「模块可用但没人调它」）。
+/// 存在的意义是装机之后能在各个真实 app 里挨个点一遍，肉眼确认：读到的内容对不对、
+/// 终端和密码框有没有被拦住、卡死的 app 会不会把界面冻住。
+///
+/// `delayMs` 是这个命令能用起来的关键：从 devtools 里 invoke 时前台 app 是 OpenLess
+/// 自己，读到的永远是我们自己的窗口。传个 3000 就有三秒时间切到备忘录 / VS Code /
+/// 微信里点进输入框，探针在那时才真正开始读。
+///
+/// ```js
+/// await window.__TAURI_INTERNALS__.invoke('debug_read_cursor_context', { delayMs: 3000 })
+/// ```
+#[tauri::command]
+pub async fn debug_read_cursor_context(
+    budget_chars: Option<usize>,
+    delay_ms: Option<u64>,
+) -> crate::host_document::HostDocumentReadResult {
+    if let Some(delay) = delay_ms.filter(|ms| *ms > 0) {
+        // 上限 30s：这是手动调试入口，不该能被参数拖成一个永不返回的命令。
+        tokio::time::sleep(std::time::Duration::from_millis(delay.min(30_000))).await;
+    }
+    let budget = budget_chars
+        .filter(|chars| *chars > 0)
+        .unwrap_or(crate::host_document::DEFAULT_BUDGET_CHARS);
+
+    let result = crate::host_document::probe_around_cursor(budget).await;
+    // 同步打进日志：装机验证时多半是切到别的 app 手动点，回头翻日志比翻 devtools 顺手。
+    log::info!(
+        "[cursor-context] status={:?} reason={:?} app={:?} bundle={:?} chars={} elapsed={}ms",
+        result.status,
+        result.reason,
+        result.app_name,
+        result.bundle_id,
+        result
+            .window
+            .as_ref()
+            .map(|w| w.text.chars().count())
+            .unwrap_or(0),
+        result.elapsed_ms,
+    );
+    result
 }
 
 // ─────────────────────────── unused but exported (silences dead_code) ───────────────────────────

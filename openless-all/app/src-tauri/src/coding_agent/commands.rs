@@ -12,10 +12,10 @@ use tauri::{AppHandle, Emitter, Window};
 
 use super::detect::{has_computer_use_mcp, McpServerStatus};
 use super::guard::build_guard_settings_json;
-use super::opencode::detect_opencode;
+use super::opencode::list_opencode_models;
 use super::{
-    claude_mcp_list, create_git_snapshot, detect_claude, run_claude_agent,
-    CodingAgentPermissionMode, CodingAgentRequest,
+    claude_mcp_list, create_git_snapshot, probe_cli, run_claude_agent, CodingAgentPermissionMode,
+    CodingAgentRequest,
 };
 
 /// 当前测试运行的取消标志（一次只跑一个）。
@@ -38,7 +38,9 @@ fn validate_exe(exe: &str) -> Result<(), String> {
         if exe == "claude" {
             return Ok(());
         }
-        return Err(format!("不允许的可执行文件名: {exe}（只接受 'claude' 或已知安装目录下的绝对路径）"));
+        return Err(format!(
+            "不允许的可执行文件名: {exe}（只接受 'claude' 或已知安装目录下的绝对路径）"
+        ));
     }
     // 绝对路径：必须规范化到已知 claude 安装目录之一
     let path = std::path::Path::new(exe);
@@ -46,11 +48,7 @@ fn validate_exe(exe: &str) -> Result<(), String> {
         return Err(format!("不允许的相对路径: {exe}"));
     }
     // 已知 claude 安装目录前缀
-    let known_prefixes: &[&str] = &[
-        "/usr/local/bin/",
-        "/usr/bin/",
-        "/opt/homebrew/bin/",
-    ];
+    let known_prefixes: &[&str] = &["/usr/local/bin/", "/usr/bin/", "/opt/homebrew/bin/"];
     // 也允许 ~/.local/bin/claude（用户目录绝对路径，动态计算）
     let home_prefix = std::env::var("HOME")
         .ok()
@@ -58,11 +56,15 @@ fn validate_exe(exe: &str) -> Result<(), String> {
 
     let exe_norm = exe.replace('\\', "/");
     let allowed = known_prefixes.iter().any(|p| exe_norm.starts_with(p))
-        || home_prefix.as_deref().map_or(false, |p| exe_norm.starts_with(p));
+        || home_prefix
+            .as_deref()
+            .map_or(false, |p| exe_norm.starts_with(p));
     if allowed {
         Ok(())
     } else {
-        Err(format!("不允许的 claude 路径: {exe}（必须位于已知安装目录）"))
+        Err(format!(
+            "不允许的 claude 路径: {exe}（必须位于已知安装目录）"
+        ))
     }
 }
 
@@ -107,16 +109,18 @@ pub async fn coding_agent_detect(
 ) -> Result<ClaudeDetectionWire, String> {
     ensure_main_window(&window)?;
     let exe = normalize_exe(exe)?;
-    let version = detect_claude(&exe).await;
-    let mcp_servers = if version.is_some() {
+    let probe = probe_cli(&exe).await;
+    // MCP 列表只在命令真能跑时才查（跑不通查了也是白查）。注意判据是 installed 而不是
+    // 「解析出版本号」——见 probe_cli 的文档。
+    let mcp_servers = if probe.installed {
         claude_mcp_list(&exe).await
     } else {
         Vec::new()
     };
     let has_computer_use = has_computer_use_mcp(&mcp_servers);
     Ok(ClaudeDetectionWire {
-        installed: version.is_some(),
-        version,
+        installed: probe.installed,
+        version: probe.version,
         exe,
         mcp_servers,
         has_computer_use,
@@ -135,6 +139,56 @@ pub struct OpenCodeDetectionWire {
     pub exe: String,
 }
 
+/// 校验用户填的可执行文件：只接受裸文件名或绝对路径，拒绝 `..` 与相对路径。
+/// 留空时回落到 `default_exe`。
+fn normalize_generic_exe(exe: Option<String>, default_exe: &str) -> Result<String, String> {
+    let exe = exe
+        .map(|e| e.trim().to_string())
+        .filter(|e| !e.is_empty())
+        .unwrap_or_else(|| default_exe.to_string());
+    if exe.contains("..") {
+        return Err("不允许的可执行文件路径: 包含 '..'".into());
+    }
+    if (exe.contains('/') || exe.contains('\\')) && !std::path::Path::new(&exe).is_absolute() {
+        return Err("不允许的相对路径，仅接受裸可执行文件名或绝对路径".into());
+    }
+    Ok(exe)
+}
+
+fn normalize_opencode_exe(exe: Option<String>) -> Result<String, String> {
+    normalize_generic_exe(exe, "opencode")
+}
+
+/// 检测 Codex / dsh 是否安装、版本，供设置页提示用户先装 / 先登录。
+///
+/// 与 [`coding_agent_detect_opencode`] 共用 [`OpenCodeDetectionWire`] 这个「装没装 + 版本 +
+/// 实际用的可执行文件」三元组——三家后端的检测结果形状完全一致，没必要各造一个 wire 类型。
+///
+/// `provider` 取 `UserPreferences.coding_agent_provider` 的字符串值。Claude / OpenCode 走
+/// 各自已有的命令（它们还要查 MCP / 模型列表），这里只认 `codex-cli` / `dsh-cli`。
+#[tauri::command]
+pub async fn coding_agent_detect_cli(
+    window: Window,
+    provider: String,
+    exe: Option<String>,
+) -> Result<OpenCodeDetectionWire, String> {
+    ensure_main_window(&window)?;
+    let parsed = super::CodingAgentProvider::from_pref(&provider);
+    let default_exe = match parsed {
+        super::CodingAgentProvider::CodexCli | super::CodingAgentProvider::DshCli => {
+            parsed.default_exe()
+        }
+        _ => return Err(format!("该后端不走通用检测: {provider}")),
+    };
+    let exe = normalize_generic_exe(exe, default_exe)?;
+    let probe = probe_cli(&exe).await;
+    Ok(OpenCodeDetectionWire {
+        installed: probe.installed,
+        version: probe.version,
+        exe,
+    })
+}
+
 /// 检测 `opencode` 是否安装、版本。语音 Agent 选了 OpenCode 后端时，设置页据此提示
 /// 用户是否需要先 `npm i -g opencode-ai` / 登录。
 #[tauri::command]
@@ -143,23 +197,25 @@ pub async fn coding_agent_detect_opencode(
     exe: Option<String>,
 ) -> Result<OpenCodeDetectionWire, String> {
     ensure_main_window(&window)?;
-    let exe = exe
-        .map(|e| e.trim().to_string())
-        .filter(|e| !e.is_empty())
-        .unwrap_or_else(|| "opencode".to_string());
-    // 拒绝路径遍历和相对路径（--version 探测仅允许裸名或绝对路径）。
-    if exe.contains("..") {
-        return Err("不允许的可执行文件路径: 包含 '..'".into());
-    }
-    if (exe.contains('/') || exe.contains('\\')) && !std::path::Path::new(&exe).is_absolute() {
-        return Err("不允许的相对路径，仅接受裸可执行文件名或绝对路径".into());
-    }
-    let version = detect_opencode(&exe).await;
+    let exe = normalize_opencode_exe(exe)?;
+    let probe = probe_cli(&exe).await;
     Ok(OpenCodeDetectionWire {
-        installed: version.is_some(),
-        version,
+        installed: probe.installed,
+        version: probe.version,
         exe,
     })
+}
+
+/// 拉取 OpenCode 当前账号可用模型，供 Less Computer 设置页自动填充模型选择器。
+#[tauri::command]
+pub async fn coding_agent_list_opencode_models(
+    window: Window,
+    exe: Option<String>,
+    refresh: Option<bool>,
+) -> Result<Vec<String>, String> {
+    ensure_main_window(&window)?;
+    let exe = normalize_opencode_exe(exe)?;
+    list_opencode_models(&exe, refresh.unwrap_or(true)).await
 }
 
 /// 护栏化地无头跑一次 claude，事件流式 emit 到前端 `coding-agent:test`。

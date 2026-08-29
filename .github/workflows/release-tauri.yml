@@ -21,6 +21,11 @@ on:
       - 'v*-tauri'
   workflow_dispatch:
 
+# 同一 tag 重复推送只跑最新一次；workflow_dispatch 用 run_id 隔离避免互相取消。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
 jobs:
   build:
     permissions:
@@ -60,13 +65,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # vendor/qwen-asr 是 macOS 上 build.rs 必须的 git submodule（cc-rs 编译
-          # Open-Less/qwen-asr fork 的 C 源），不拉就会在 mac 端 cargo build 阶段挂掉。
-          submodules: recursive
+          # MLX 子模块只在 macOS 发布构建需要；Linux 的 C 后端单独初始化 qwen-asr。
+          submodules: ${{ startsWith(matrix.platform, 'macos') && 'recursive' || 'false' }}
+
+      - name: Initialize Linux C ASR submodule
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        run: git submodule update --init openless-all/app/src-tauri/vendor/qwen-asr
+
+      - name: Disable macOS-only Qwen3 MLX dependency
+        if: ${{ !startsWith(matrix.platform, 'macos') }}
+        run: node openless-all/app/scripts/ci-disable-macos-qwen3.mjs
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: "22"
           cache: npm
           cache-dependency-path: 'openless-all/app/package-lock.json'
 
@@ -96,6 +109,7 @@ jobs:
             libxdo-dev \
             patchelf \
             rpm \
+            squashfs-tools \
             wget
 
       - name: Install npm deps
@@ -434,6 +448,8 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/openless-all/app/src-tauri/linux-fcitx5-plugin"
           cp libopenless.so "$GITHUB_WORKSPACE/openless-all/app/src-tauri/linux-fcitx5-plugin/"
           cp openless.conf "$GITHUB_WORKSPACE/openless-all/app/src-tauri/linux-fcitx5-plugin/"
+          test -s "$GITHUB_WORKSPACE/openless-all/app/src-tauri/linux-fcitx5-plugin/libopenless.so"
+          test -s "$GITHUB_WORKSPACE/openless-all/app/src-tauri/linux-fcitx5-plugin/openless.conf"
 
       - name: Build (Linux)
         if: matrix.platform == 'ubuntu-22.04'
@@ -448,10 +464,15 @@ jobs:
           #   ensure_plugin_installed() 自动安装到 ~/.local/ 下。
           # 插件 .so + .conf 由上一步 Build fcitx5 plugin 生成并复制到
           # src-tauri/linux-fcitx5-plugin/ 下。
+          test -s src-tauri/linux-fcitx5-plugin/libopenless.so
+          test -s src-tauri/linux-fcitx5-plugin/openless.conf
           cat > /tmp/tauri-linux-config.json << CONFIG_EOF
           {
             "bundle": {
-              "resources": ["linux-fcitx5-plugin/libopenless.so"],
+              "resources": [
+                "linux-fcitx5-plugin/libopenless.so",
+                "linux-fcitx5-plugin/openless.conf"
+              ],
               "linux": {
                 "deb": {
                   "depends": ["fcitx5", "fcitx5-module-dbus", "libdbus-1-3"],
@@ -479,6 +500,28 @@ jobs:
           fi
           npm run tauri -- build --bundles deb,rpm,appimage --config "$CONFIG_FILE"
 
+          APPIMAGE_PATH=$(find src-tauri/target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' -print -quit)
+          if [ -z "$APPIMAGE_PATH" ]; then
+            echo "::error::AppImage bundle was not produced"
+            exit 1
+          fi
+          # Type-2 AppImage has an ELF launcher before the embedded SquashFS.
+          # Resolve the filesystem offset before asking unsquashfs to inspect it.
+          APPIMAGE_OFFSET=$("$APPIMAGE_PATH" --appimage-offset)
+          if ! [[ "$APPIMAGE_OFFSET" =~ ^[0-9]+$ ]]; then
+            echo "::error::Could not resolve the AppImage SquashFS offset"
+            exit 1
+          fi
+          APPIMAGE_CONTENTS=$(unsquashfs -offset "$APPIMAGE_OFFSET" -l "$APPIMAGE_PATH")
+          if ! grep -Eq '(^|/)usr/lib/OpenLess/linux-fcitx5-plugin/libopenless\.so$' <<< "$APPIMAGE_CONTENTS"; then
+            echo "::error::AppImage is missing usr/lib/OpenLess/linux-fcitx5-plugin/libopenless.so"
+            exit 1
+          fi
+          if ! grep -Eq '(^|/)usr/lib/OpenLess/linux-fcitx5-plugin/openless\.conf$' <<< "$APPIMAGE_CONTENTS"; then
+            echo "::error::AppImage is missing usr/lib/OpenLess/linux-fcitx5-plugin/openless.conf"
+            exit 1
+          fi
+
       - name: Disambiguate macOS updater bundle filename
         if: startsWith(matrix.platform, 'macos') && env.TAURI_SIGNING_PRIVATE_KEY != ''
         shell: bash
@@ -499,7 +542,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           OPENLESS_UPDATE_TARGET: ${{ matrix.updater-target }}
           OPENLESS_UPDATE_ARCH: ${{ matrix.updater-arch }}
-          OPENLESS_UPDATE_REPO: appergb/openless
+          OPENLESS_UPDATE_REPO: Open-Less/openless
           OPENLESS_UPDATE_MIRROR_BASE_URL: https://fastgit.cc/https://github.com
           # beta 渠道时输出 latest-{tgt}-{arch}-beta.json，stable 沿用旧文件名。
           OPENLESS_RELEASE_CHANNEL: ${{ env.OPENLESS_RELEASE_CHANNEL }}

@@ -38,6 +38,37 @@ export function codingAgentDetectOpencode(exe?: string): Promise<OpenCodeDetecti
     )
 }
 
+/**
+ * 检测 Codex / dsh 是否安装。与 OpenCode 共用同一个检测结果形状。
+ * `provider` 传 prefs 里的后端 id（只认 `codex-cli` / `dsh-cli`）。
+ */
+export function codingAgentDetectCli(
+    provider: string,
+    exe?: string,
+): Promise<OpenCodeDetection> {
+    return invokeOrMock(
+        "coding_agent_detect_cli",
+        { provider, exe },
+        () => ({
+            installed: false,
+            version: null,
+            exe: exe || (provider === "dsh-cli" ? "dsh" : "codex"),
+        }),
+    )
+}
+
+/** 拉取当前 OpenCode 配置可用的 `provider/model` 列表。 */
+export function codingAgentListOpencodeModels(
+    exe?: string,
+    refresh = true,
+): Promise<string[]> {
+    return invokeOrMock(
+        "coding_agent_list_opencode_models",
+        { exe, refresh },
+        () => [],
+    )
+}
+
 /** 无头 Claude 运行事件，由后端 `coding-agent:test` 流式推送（tag 为 `kind`）。 */
 export type CodingAgentEvent =
     | { kind: "started"; session_id: string }

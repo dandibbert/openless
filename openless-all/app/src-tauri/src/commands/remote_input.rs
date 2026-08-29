@@ -15,19 +15,27 @@ pub fn get_remote_input_status(
 }
 
 #[tauri::command]
-pub fn list_local_ips() -> Vec<String> {
-    crate::remote_server::local_lan_ipv4s()
-        .iter()
-        .map(|ip| ip.to_string())
-        .collect()
+pub async fn list_local_ips(app: AppHandle) -> Vec<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::remote_server::discover_lan_addresses(&app)
+            .ips
+            .iter()
+            .map(|ip| ip.to_string())
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 #[tauri::command]
-pub fn regenerate_remote_pin(coord: CoordinatorState<'_>) -> String {
+pub fn regenerate_remote_pin(coord: CoordinatorState<'_>) -> Result<String, String> {
     coord.regenerate_remote_pin()
 }
 
 /// 同步 PC 端界面语言到远程输入服务，H5 录音页据此显示对应语言。
+///
+/// 不要在这里 `run_on_main_thread` 刷托盘：本命令是同步 IPC，设置页一挂载就调用。
+/// 等主线程会和 WebView 互相卡住，窗口变成「未响应」。
 #[tauri::command]
 pub fn set_remote_locale(coord: CoordinatorState<'_>, locale: String) {
     coord.set_remote_locale(locale);

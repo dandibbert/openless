@@ -11,6 +11,16 @@ pub struct SelectionContext {
     pub source_app: Option<String>,
 }
 
+pub struct SelectionCaptureOutcome {
+    pub selection: Option<SelectionContext>,
+}
+
+pub fn capture_selection_with_status() -> SelectionCaptureOutcome {
+    SelectionCaptureOutcome {
+        selection: capture_selection(),
+    }
+}
+
 #[cfg(target_os = "android")]
 pub fn capture_selection() -> Option<SelectionContext> {
     let text = match crate::android::jni::android::with_android_env(|env, context| {
@@ -40,6 +50,13 @@ pub fn capture_selection() -> Option<SelectionContext> {
 #[cfg(not(target_os = "android"))]
 pub fn capture_selection() -> Option<SelectionContext> {
     None
+}
+
+/// 与桌面端 `selection::current_front_app_parts` 同形。移动端没有「前台 app」这个
+/// 概念（我们自己就是前台），恒返回空 —— 存在的意义只是让 `capsule_focus` 那边能有
+/// 一份跨平台统一的实现，不必再写第二份平台分流。
+pub(crate) fn current_front_app_parts() -> (Option<String>, Option<String>) {
+    (None, None)
 }
 
 fn truncate_selection(text: &str) -> String {

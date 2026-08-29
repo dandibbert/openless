@@ -7,6 +7,13 @@
 // `fetchLocalAsrRemoteInfo()` 实时从 HuggingFace tree API 拉取。
 
 import { invokeOrMock } from "./ipc"
+import type { OS } from "../components/WindowChrome"
+
+export function isLocalAsrModelSupportedOnOs(modelId: string, os: OS): boolean {
+    if (modelId.startsWith("whisper-")) return os === "mac"
+    if (modelId.startsWith("qwen3-asr-")) return os === "mac" || os === "linux"
+    return true
+}
 
 export type LocalAsrMirror = "huggingface" | "hf-mirror"
 
@@ -16,7 +23,7 @@ export interface LocalAsrSettings {
     mirror: string
     modelsBaseDir: string | null
     modelsRootDir: string
-    /** macOS 才编入 vendored Open-Less/qwen-asr 引擎；Win 端 UI 据此把"开始"按钮灰掉。 */
+    /** macOS/Linux 编入 C 引擎；MLX 仅在 macOS 可用。 */
     engineAvailable: boolean
 }
 
@@ -177,7 +184,7 @@ const MOCK_FOUNDRY_CATALOG: FoundryLocalAsrCatalogModel[] = [
 ]
 
 const MOCK_SETTINGS: LocalAsrSettings = {
-    providerId: "local-qwen3",
+    providerId: "local-qwen3-mlx",
     activeModel: "qwen3-asr-0.6b",
     mirror: "huggingface",
     modelsBaseDir: null,
@@ -260,6 +267,32 @@ export function fetchLocalAsrRemoteInfo(
             mirror: mirror ?? "huggingface",
             files: [],
             totalBytes: 0,
+        }),
+    )
+}
+
+/** HF 模型卡片：下载量 / 收藏 / 简介（下载弹窗右侧展示）。 */
+export interface HfModelCard {
+    modelId: string
+    mirror: string
+    downloads: number
+    likes: number
+    description: string
+}
+
+export function fetchLocalAsrHfCard(
+    modelId: string,
+    mirror?: string,
+): Promise<HfModelCard> {
+    return invokeOrMock(
+        "local_asr_fetch_hf_card",
+        { modelId, mirror },
+        () => ({
+            modelId,
+            mirror: mirror ?? "huggingface",
+            downloads: 0,
+            likes: 0,
+            description: "",
         }),
     )
 }
@@ -463,6 +496,7 @@ export type SherpaOnnxModelAlias =
     | "sense-voice-small-zh"
     | "paraformer-zh"
     | "whisper-small-multi"
+    | "whisper-large-v3-multi"
     | "qwen3-asr-0.6b-int8"
 
 export type SherpaOnnxMirror = "huggingface" | "hf-mirror" | "github-release"
@@ -507,6 +541,11 @@ export const SHERPA_ONNX_ASR_MODELS: SherpaOnnxModelOption[] = [
         descKey: "localAsr.sherpaModelWhisperDesc",
     },
     {
+        alias: "whisper-large-v3-multi",
+        labelKey: "localAsr.sherpaModelWhisperLargeV3",
+        descKey: "localAsr.sherpaModelWhisperLargeV3Desc",
+    },
+    {
         alias: "qwen3-asr-0.6b-int8",
         labelKey: "localAsr.sherpaModelQwen3",
         descKey: "localAsr.sherpaModelQwen3Desc",
@@ -546,6 +585,13 @@ export function getSherpaOnnxAsrCatalog(): Promise<SherpaOnnxCatalogModel[]> {
             cached: false,
             downloadedBytes: 0,
             fileSizeMb: 480,
+        },
+        {
+            alias: "whisper-large-v3-multi" as const,
+            displayName: "Whisper Large V3",
+            cached: false,
+            downloadedBytes: 0,
+            fileSizeMb: 1700,
         },
         {
             alias: "qwen3-asr-0.6b-int8" as const,

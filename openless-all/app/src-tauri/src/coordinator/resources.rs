@@ -5,7 +5,78 @@ use crate::recorder::Recorder;
 use crate::types::CapsuleState;
 use tauri::Manager;
 
-use super::{emit_capsule, ActiveAsr, Inner};
+#[cfg(target_os = "windows")]
+use crate::asr::local::foundry_runtime::{FoundryFallbackNotice, FoundryFallbackNoticeCallback};
+
+#[cfg(target_os = "windows")]
+use super::QaPhase;
+use super::{emit_capsule, ActiveAsr, AsrCallLabel, Inner};
+
+/// 把 Foundry GPU→CPU 回退的内部通知投影到当前听写胶囊。
+///
+/// 只在同一个 Processing 会话仍有效时发出，避免旧转写 future 的迟到通知盖住新会话。
+#[cfg(target_os = "windows")]
+pub(super) fn foundry_dictation_fallback_notice_callback(
+    inner: &Arc<Inner>,
+    session_id: SessionId,
+) -> FoundryFallbackNoticeCallback {
+    let inner = Arc::clone(inner);
+    Arc::new(move |notice: FoundryFallbackNotice| {
+        let elapsed_ms = {
+            let state = inner.state.lock();
+            if state.session_id != session_id
+                || state.cancelled
+                || state.phase != SessionPhase::Processing
+            {
+                return;
+            }
+            state.started_at.elapsed().as_millis() as u64
+        };
+        log::info!(
+            "[foundry-asr] fallback_notice context=dictation phase={notice:?} session_id={session_id}"
+        );
+        emit_capsule(
+            &inner,
+            CapsuleState::Transcribing,
+            0.0,
+            elapsed_ms,
+            Some(notice.message().to_string()),
+            None,
+        );
+    })
+}
+
+/// 把 Foundry GPU→CPU 回退的内部通知投影到当前 QA 胶囊。
+#[cfg(target_os = "windows")]
+pub(super) fn foundry_qa_fallback_notice_callback(
+    inner: &Arc<Inner>,
+    session_id: SessionId,
+) -> FoundryFallbackNoticeCallback {
+    let inner = Arc::clone(inner);
+    Arc::new(move |notice: FoundryFallbackNotice| {
+        let active = {
+            let state = inner.qa_state.lock();
+            state.panel_visible
+                && state.session_id == session_id
+                && !state.cancelled
+                && state.phase == QaPhase::Processing
+        };
+        if !active {
+            return;
+        }
+        log::info!(
+            "[foundry-asr] fallback_notice context=qa phase={notice:?} session_id={session_id}"
+        );
+        emit_capsule(
+            &inner,
+            CapsuleState::Transcribing,
+            0.0,
+            0,
+            Some(notice.message().to_string()),
+            None,
+        );
+    })
+}
 
 pub(super) struct SessionResource<T> {
     pub(super) session_id: SessionId,
@@ -54,12 +125,98 @@ pub(super) fn take_session_resource<T>(
     }
 }
 
-pub(super) fn store_asr_for_session(inner: &Arc<Inner>, session_id: SessionId, asr: ActiveAsr) {
+/// 存放本次会话的 ASR 句柄 + 构建时 (provider, model) 快照。label 必须来自构建
+/// 现场（凭据/alias 归一化后的实际值），不能事后重读全局设置——签名强制每个
+/// 构建分支都交出快照，漏一个就编译不过（PR #826 review）。
+pub(super) fn store_asr_for_session(
+    inner: &Arc<Inner>,
+    session_id: SessionId,
+    asr: ActiveAsr,
+    label: AsrCallLabel,
+) {
     *inner.asr.lock() = Some(SessionResource::new(session_id, asr));
+    *inner.asr_label.lock() = Some(SessionResource::new(session_id, label));
+}
+
+/// 多模态模式下替代 ASR 消费录音 PCM 的简单缓冲器：录音期间把 16k/mono/i16 PCM
+/// 原样攒进 Vec，松键后由 omni 通道编码成 WAV 一次调用。与 ActiveAsr 完全解耦，
+/// 不会误触发任何 ASR 协议/凭据逻辑。
+#[derive(Default)]
+pub(super) struct PcmBufferConsumer {
+    buffer: parking_lot::Mutex<Vec<u8>>,
+}
+
+impl PcmBufferConsumer {
+    pub(super) fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    pub(super) fn pcm(&self) -> Vec<u8> {
+        self.buffer.lock().clone()
+    }
+
+    pub(super) fn duration_ms(&self) -> u64 {
+        crate::asr::pcm::pcm_duration_ms(&self.buffer.lock())
+    }
+}
+
+impl crate::recorder::AudioConsumer for PcmBufferConsumer {
+    fn consume_pcm_chunk(&self, pcm: &[u8]) {
+        self.buffer.lock().extend_from_slice(pcm);
+    }
+}
+
+/// 把 16k/mono/i16 原始 PCM 字节编码成 WAV 文件字节（omni 通道统一入口）。
+/// 与各 ASR provider 内联的 `chunks_exact(2)` 转换等价，收口成共享实现。
+pub(super) fn pcm_bytes_to_wav(pcm: &[u8]) -> Vec<u8> {
+    let samples: Vec<i16> = pcm
+        .chunks_exact(2)
+        .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
+        .collect();
+    crate::asr::wav::encode_wav_16k_mono(&samples)
+}
+
+pub(super) fn store_omni_pcm_for_session(
+    inner: &Arc<Inner>,
+    session_id: SessionId,
+    consumer: Arc<PcmBufferConsumer>,
+) {
+    *inner.omni_pcm.lock() = Some(SessionResource::new(session_id, consumer));
+}
+
+pub(super) fn take_omni_pcm_for_session(
+    inner: &Arc<Inner>,
+    session_id: SessionId,
+) -> Option<Arc<PcmBufferConsumer>> {
+    take_session_resource(&mut inner.omni_pcm.lock(), session_id)
+}
+
+pub(super) fn store_qa_omni_pcm_for_session(
+    inner: &Arc<Inner>,
+    session_id: SessionId,
+    consumer: Arc<PcmBufferConsumer>,
+) {
+    *inner.qa_omni_pcm.lock() = Some(SessionResource::new(session_id, consumer));
+}
+
+pub(super) fn take_qa_omni_pcm_for_session(
+    inner: &Arc<Inner>,
+    session_id: SessionId,
+) -> Option<Arc<PcmBufferConsumer>> {
+    take_session_resource(&mut inner.qa_omni_pcm.lock(), session_id)
 }
 
 pub(super) fn take_asr_for_session(inner: &Arc<Inner>, session_id: SessionId) -> Option<ActiveAsr> {
     let mut slot = inner.asr.lock();
+    take_session_resource(&mut slot, session_id)
+}
+
+/// 取走会话的 ASR 构建时快照（与 take_asr_for_session 相同的 session_id 守卫）。
+pub(super) fn take_asr_label_for_session(
+    inner: &Arc<Inner>,
+    session_id: SessionId,
+) -> Option<AsrCallLabel> {
+    let mut slot = inner.asr_label.lock();
     take_session_resource(&mut slot, session_id)
 }
 
@@ -68,14 +225,21 @@ pub(super) fn cancel_active_asr(asr: ActiveAsr) {
         ActiveAsr::Volcengine(v) => v.cancel(),
         ActiveAsr::Whisper(w) => w.cancel(),
         ActiveAsr::Mimo(m) => m.cancel(),
+        ActiveAsr::DashScopeMultimodal(m) => m.cancel(),
+        ActiveAsr::ElevenLabs(e) => e.cancel(),
         ActiveAsr::Bailian(b) => b.cancel(),
         ActiveAsr::Soniox(s) => s.cancel(),
+        ActiveAsr::Qwen3Realtime(q) => q.cancel(),
+        ActiveAsr::StepfunRealtime(s) => s.cancel(),
+        ActiveAsr::Xfyun(x) => x.cancel(),
         #[cfg(target_os = "windows")]
         ActiveAsr::FoundryLocalWhisper(local) => local.cancel(),
         #[cfg(target_os = "windows")]
         ActiveAsr::SherpaOnnxLocal(local) => local.cancel(),
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         ActiveAsr::Local(local) => local.cancel(),
+        #[cfg(target_os = "macos")]
+        ActiveAsr::LocalWhisper(local) => local.cancel(),
         #[cfg(target_os = "macos")]
         ActiveAsr::AppleSpeech(local) => local.cancel(),
     }
@@ -201,8 +365,34 @@ pub(super) fn release_recording_mute(inner: &Arc<Inner>, owner: &'static str) {
     }
 }
 
-pub(super) fn stop_qa_recorder(inner: &Arc<Inner>) {
-    if let Some(rec) = inner.qa_recorder.lock().take() {
+pub(super) fn store_qa_asr_for_session(inner: &Arc<Inner>, session_id: SessionId, asr: ActiveAsr) {
+    *inner.qa_asr.lock() = Some(SessionResource::new(session_id, asr));
+}
+
+pub(super) fn take_qa_asr_for_session(
+    inner: &Arc<Inner>,
+    session_id: SessionId,
+) -> Option<ActiveAsr> {
+    take_session_resource(&mut inner.qa_asr.lock(), session_id)
+}
+
+pub(super) fn cancel_qa_asr_for_session(inner: &Arc<Inner>, session_id: SessionId) {
+    if let Some(asr) = take_qa_asr_for_session(inner, session_id) {
+        cancel_active_asr(asr);
+    }
+}
+
+pub(super) fn store_qa_recorder_for_session(
+    inner: &Arc<Inner>,
+    session_id: SessionId,
+    recorder: Recorder,
+) {
+    *inner.qa_recorder.lock() = Some(SessionResource::new(session_id, recorder));
+}
+
+pub(super) fn stop_qa_recorder_for_session(inner: &Arc<Inner>, session_id: SessionId) {
+    let recorder = take_session_resource(&mut inner.qa_recorder.lock(), session_id);
+    if let Some(rec) = recorder {
         rec.stop();
         release_recording_mute(inner, "qa");
     }
@@ -226,6 +416,8 @@ pub(super) fn stop_recorder_for_session(inner: &Arc<Inner>, session_id: SessionI
 pub(super) fn discard_startup_resources_for_session(inner: &Arc<Inner>, session_id: SessionId) {
     stop_recorder_for_session(inner, session_id);
     cancel_asr_for_session(inner, session_id);
+    #[cfg(not(mobile))]
+    super::clear_remote_mic_path(inner, session_id);
 }
 
 pub(super) fn stop_recorder_if_pending_start_stop(inner: &Arc<Inner>) {

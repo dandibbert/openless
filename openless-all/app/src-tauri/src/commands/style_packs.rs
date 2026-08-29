@@ -210,11 +210,20 @@ pub fn delete_style_pack(
         .style_packs()
         .remove_imported(&id)
         .map_err(|e| e.to_string())?;
+    // 孤儿清理：删除包时一并移除指向它的风格快捷键，避免残留一条按了没反应的绑定。
+    let hotkeys_before = prefs.style_pack_hotkeys.len();
+    prefs.style_pack_hotkeys.retain(|entry| entry.pack_id != id);
+    let removed_hotkey = prefs.style_pack_hotkeys.len() != hotkeys_before;
     if prefs.active_style_pack_id == id {
         prefs.active_style_pack_id = default_active_style_pack_id();
         let _ = sync_style_pack_prefs_and_persist(&*coord, &app, prefs)?;
+    } else if removed_hotkey {
+        let _ = sync_style_pack_prefs_and_persist(&*coord, &app, prefs)?;
     } else {
         refresh_tray_menu_async(&app);
+    }
+    if removed_hotkey {
+        coord.update_style_pack_hotkey_bindings();
     }
     Ok(())
 }
@@ -224,7 +233,25 @@ pub fn import_style_pack_from_zip(
     coord: CoordinatorState<'_>,
     zip_path: String,
 ) -> Result<StylePack, String> {
-    log::info!("[style-pack] command import requested zip_path={zip_path}");
+    log::info!(
+        "[style-pack] command import requested source_kind={}",
+        if zip_path.starts_with("content://") {
+            "content-uri"
+        } else {
+            "file-path"
+        }
+    );
+    #[cfg(target_os = "android")]
+    if zip_path.starts_with("content://") {
+        let bytes = crate::android::jni::android::read_content_uri(
+            &zip_path,
+            crate::persistence::STYLE_PACK_ARCHIVE_MAX_COMPRESSED_BYTES,
+        )?;
+        return coord
+            .style_packs()
+            .import_from_zip_bytes(&bytes, "Android document provider")
+            .map_err(|error| error.to_string());
+    }
     coord
         .style_packs()
         .import_from_zip(std::path::Path::new(&zip_path))

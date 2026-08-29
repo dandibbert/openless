@@ -13,6 +13,11 @@ on:
       - 'v*-tauri'
   workflow_dispatch:
 
+# 同一 tag 重复推送只跑最新一次；workflow_dispatch 用 run_id 隔离避免互相取消。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
 jobs:
   build-android-apk:
     permissions:
@@ -26,7 +31,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          # Android 不使用本地 Qwen3/Whisper C 子模块。
+          submodules: false
+
+      - name: Disable macOS-only Qwen3 MLX dependency
+        run: node openless-all/app/scripts/ci-disable-macos-qwen3.mjs
+
 
       - name: Detect build mode
         id: mode
@@ -136,7 +146,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: "22"
           cache: npm
           cache-dependency-path: openless-all/app/package-lock.json
 
@@ -178,6 +188,14 @@ jobs:
       - name: Merge overlay / accessibility manifest
         working-directory: openless-all/app
         run: node scripts/merge-android-overlay-manifest.mjs
+
+      - name: Merge Shizuku manifest
+        working-directory: openless-all/app
+        run: node scripts/merge-android-shizuku-manifest.mjs
+
+      - name: Patch Shizuku Gradle dependencies
+        working-directory: openless-all/app
+        run: node scripts/patch-android-shizuku-deps.mjs
 
       - name: Merge updater / install manifest
         working-directory: openless-all/app
@@ -330,7 +348,7 @@ jobs:
         working-directory: openless-all/app
         env:
           OPENLESS_UPDATE_APK_DIR: ${{ steps.apk.outputs.out_dir }}
-          OPENLESS_UPDATE_REPO: appergb/openless
+          OPENLESS_UPDATE_REPO: Open-Less/openless
           OPENLESS_UPDATE_MIRROR_BASE_URL: https://fastgit.cc/https://github.com
           OPENLESS_RELEASE_CHANNEL: ${{ env.OPENLESS_RELEASE_CHANNEL }}
           OPENLESS_RELEASE_TAG: ${{ github.ref_name }}

@@ -18,9 +18,11 @@
  *    SetTranslationHotkeyRaw(uu: sym, states) — 直接设翻译模式触发 sym+states
  *    SetAuxDown(s: text)                 — 在候选词列表下方显示状态文本
  *    ClearAuxDown()                      — 清除候选词列表下方文本
+ *    GetSelectionText() -> s             — 读取当前 PRIMARY 选区文本（由 clipboard addon 维护）
  *  信号:
  *    DictationKeyEvent(uub: sym, states, isPress) — 听写热键按下/抬起
  *    QaShortcutEvent(uub: sym, states, isPress)   — QA 快捷键按下/抬起
+ *    SelectionPolishEvent(uub: sym, states, isPress) — 选区润色快捷键按下/抬起
  *    TranslationModifierEvent(uub: sym, states, isPress) — 翻译修饰键按下/抬起
  */
 
@@ -45,6 +47,7 @@
 #include <fcitx/inputcontextmanager.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx/instance.h>
+#include <fcitx-module/clipboard/clipboard_public.h>
 #include <fcitx-module/dbus/dbus_public.h>
 
 FCITX_DEFINE_LOG_CATEGORY(openless, "openless");
@@ -68,9 +71,13 @@ public:
           triggerRawStates_(0),
           qaRawSym_(0),
           qaRawStates_(0),
+          selectionPolishRawSym_(0),
+          selectionPolishRawStates_(0),
           translationRawSym_(0),
           translationRawStates_(0),
           hasCustomDictationKey_(false),
+          dictationTriggerHeld_(false),
+          dictationTriggerCombined_(false),
           savedIc_(nullptr) {
 
         // 1. 读取配置
@@ -137,21 +144,54 @@ public:
                             }
                             return false;
                         }())) {
-                        auto dsym = triggerRawSym_ != 0 ? triggerRawSym_
-                            : static_cast<uint32_t>(triggerKeyList_[0].sym());
-                        auto dstates = triggerRawStates_ != 0 ? triggerRawStates_
-                            : static_cast<uint32_t>(triggerKeyList_[0].states());
+                        // 修复崩溃: raw 路径(SetHotkeyRaw)匹配时若 triggerRawStates_==0,
+                        // 原代码会无条件取 triggerKeyList_[0];而 raw 模式常伴随空 KeyList
+                        // (见 openless.conf: TriggerKey= 为空), 对空 vector 取下标 [0]
+                        // 是未定义行为, 直接导致 fcitx5 段错误 (Key::states 读野指针)。
+                        // 修正: 只有 KeyList 路径匹配时才访问列表, raw 路径直接用 raw 值。
+                        uint32_t dsym = triggerRawSym_;
+                        uint32_t dstates = triggerRawStates_;
+                        if (triggerRawSym_ == 0 && !triggerKeyList_.empty()) {
+                            dsym = static_cast<uint32_t>(triggerKeyList_[0].sym());
+                            dstates = static_cast<uint32_t>(triggerKeyList_[0].states());
+                        }
+                        if (dsym == 0) {
+                            return;
+                        }
+                        if (!hasCustomDictationKey_ && isModifierKeySym(dsym)) {
+                            dictationTriggerHeld_ = isPress;
+                            if (isPress) {
+                                dictationTriggerCombined_ = false;
+                            }
+                        }
                         FCITX_LOGC(openless, Debug)
                             << "Dictation hotkey sym=" << dsym;
                         dictationKeyEvent(dsym, dstates, isPress);
                         keyEvent.filterAndAccept();
                         return;
                     }
+                    if (isPress && dictationTriggerHeld_ && !isModifierKeySym(sym) &&
+                        !dictationTriggerCombined_) {
+                        FCITX_LOGC(openless, Debug)
+                            << "Dictation hotkey combined with sym=" << sym;
+                        dictationTriggerCombined_ = true;
+                        dictationKeyCombined(sym, states, true);
+                    }
                     if (qaRawSym_ != 0 && sym == qaRawSym_ &&
                         states == qaRawStates_) {
                         FCITX_LOGC(openless, Debug)
                             << "QA shortcut";
                         qaShortcutEvent(qaRawSym_, qaRawStates_, isPress);
+                        keyEvent.filterAndAccept();
+                        return;
+                    }
+                    if (selectionPolishRawSym_ != 0 &&
+                        sym == selectionPolishRawSym_ &&
+                        states == selectionPolishRawStates_) {
+                        FCITX_LOGC(openless, Debug)
+                            << "Selection polish shortcut";
+                        selectionPolishEvent(selectionPolishRawSym_,
+                                             selectionPolishRawStates_, isPress);
                         keyEvent.filterAndAccept();
                         return;
                     }
@@ -296,6 +336,7 @@ public:
     void setHotkey(const std::vector<std::string> &keys) {
         // 切换预设修饰键时清空自定义组合键，避免双发
         hasCustomDictationKey_ = false;
+        resetDictationTriggerState();
         KeyList keyList;
         for (const auto &s : keys) {
             Key key(s);
@@ -326,6 +367,7 @@ public:
     void setHotkeyRaw(uint32_t sym, uint32_t states) {
         // 切换预设修饰键时清空自定义组合键，避免双发
         hasCustomDictationKey_ = false;
+        resetDictationTriggerState();
         triggerRawSym_ = sym;
         triggerRawStates_ = states;
         // 同时尝试维护 KeyList（如果 sym 可转为有效 key）
@@ -353,10 +395,12 @@ public:
             FCITX_LOGC(openless, Warn)
                 << "SetCustomDictationTrigger: invalid key '" << keyString << "'";
             hasCustomDictationKey_ = false;
+            resetDictationTriggerState();
             return;
         }
         customDictationKey_ = key;
         hasCustomDictationKey_ = true;
+        resetDictationTriggerState();
         // 有自定义键时清空已有 raw+keylist 路径，避免双发
         triggerRawSym_ = 0;
         triggerRawStates_ = 0;
@@ -388,6 +432,18 @@ public:
             << "SetQaHotkeyRaw: sym=" << sym << " states=" << states;
     }
 
+    void setSelectionPolishHotkeyRaw(uint32_t sym, uint32_t states) {
+        selectionPolishRawSym_ = sym;
+        selectionPolishRawStates_ = states;
+        RawConfig raw;
+        readAsIni(raw, configFile());
+        raw.setValueByPath("SelectionPolishRawSym", std::to_string(sym));
+        raw.setValueByPath("SelectionPolishRawStates", std::to_string(states));
+        safeSaveAsIni(raw, configFile());
+        FCITX_LOGC(openless, Info)
+            << "SetSelectionPolishHotkeyRaw: sym=" << sym << " states=" << states;
+    }
+
     void setTranslationHotkeyRaw(uint32_t sym, uint32_t states) {
         translationRawSym_ = sym;
         translationRawStates_ = states;
@@ -400,6 +456,22 @@ public:
             << "SetTranslationHotkeyRaw: sym=" << sym << " states=" << states;
     }
 
+    /// 读取当前 PRIMARY 选区文本。空字符串表示无选区或 clipboard addon 不可用。
+    std::string getSelectionText() {
+        auto *clipboard = instance_->addonManager().addon("clipboard");
+        if (!clipboard) {
+            FCITX_LOGC(openless, Debug)
+                << "GetSelectionText: clipboard addon not loaded";
+            return std::string();
+        }
+        // primary() 签名接收 const InputContext*，clipboard 模块实现中未使用该参数
+        // （读的是全局 primary_ 缓存），这里传 nullptr 即可。
+        std::string text = clipboard->call<IClipboard::primary>(nullptr);
+        FCITX_LOGC(openless, Debug)
+            << "GetSelectionText: " << text.size() << " chars";
+        return text;
+    }
+
     FCITX_OBJECT_VTABLE_METHOD(commitText, "CommitText", "s", "");
     FCITX_OBJECT_VTABLE_METHOD(setAuxDown, "SetAuxDown", "s", "");
     FCITX_OBJECT_VTABLE_METHOD(clearAuxDown, "ClearAuxDown", "", "");
@@ -407,14 +479,19 @@ public:
     FCITX_OBJECT_VTABLE_METHOD(setHotkeyRaw, "SetHotkeyRaw", "uu", "");
     FCITX_OBJECT_VTABLE_METHOD(setCustomDictationTrigger, "SetCustomDictationTrigger", "s", "");
     FCITX_OBJECT_VTABLE_METHOD(setQaHotkeyRaw, "SetQaHotkeyRaw", "uu", "");
+    FCITX_OBJECT_VTABLE_METHOD(setSelectionPolishHotkeyRaw, "SetSelectionPolishHotkeyRaw", "uu", "");
     FCITX_OBJECT_VTABLE_METHOD(setTranslationHotkeyRaw, "SetTranslationHotkeyRaw", "uu", "");
+    FCITX_OBJECT_VTABLE_METHOD(getSelectionText, "GetSelectionText", "", "s");
     FCITX_OBJECT_VTABLE_SIGNAL(dictationKeyEvent, "DictationKeyEvent", "uub");
+    FCITX_OBJECT_VTABLE_SIGNAL(dictationKeyCombined, "DictationKeyCombined", "uub");
     FCITX_OBJECT_VTABLE_SIGNAL(qaShortcutEvent, "QaShortcutEvent", "uub");
+    FCITX_OBJECT_VTABLE_SIGNAL(selectionPolishEvent, "SelectionPolishEvent", "uub");
     FCITX_OBJECT_VTABLE_SIGNAL(translationModifierEvent, "TranslationModifierEvent", "uub");
 
     Instance *instance() { return instance_; }
 
     void reloadConfig() override {
+        resetDictationTriggerState();
         readAsIni(config_, configFile());
         // 加载原始 sym/states（由 SetHotkeyRaw / SetQaHotkeyRaw / SetTranslationHotkeyRaw 写入的持久化键值）
         RawConfig raw;
@@ -434,6 +511,14 @@ public:
         {
             auto *v = raw.valueByPath("QaRawStates");
             qaRawStates_ = v ? std::stoul(*v, nullptr, 0) : 0;
+        }
+        {
+            auto *v = raw.valueByPath("SelectionPolishRawSym");
+            selectionPolishRawSym_ = v ? std::stoul(*v, nullptr, 0) : 0;
+        }
+        {
+            auto *v = raw.valueByPath("SelectionPolishRawStates");
+            selectionPolishRawStates_ = v ? std::stoul(*v, nullptr, 0) : 0;
         }
         {
             auto *v = raw.valueByPath("TranslationRawSym");
@@ -461,6 +546,18 @@ private:
         return "conf/openless.conf";
     }
 
+    static bool isModifierKeySym(uint32_t sym) {
+        // X11 modifier keysyms.  CapsLock is included to match the desktop hook's
+        // treatment of lock keys: pressing it alongside a trigger must not abort
+        // dictation as if it were a printable companion key.
+        return sym >= 0xffe1 && sym <= 0xffee;
+    }
+
+    void resetDictationTriggerState() {
+        dictationTriggerHeld_ = false;
+        dictationTriggerCombined_ = false;
+    }
+
     void rebuildTriggerKeys() {
         triggerKeyList_ = config_.triggerKey.value();
     }
@@ -472,10 +569,14 @@ private:
     uint32_t triggerRawStates_;
     uint32_t qaRawSym_;
     uint32_t qaRawStates_;
+    uint32_t selectionPolishRawSym_;
+    uint32_t selectionPolishRawStates_;
     uint32_t translationRawSym_;
     uint32_t translationRawStates_;
     Key customDictationKey_;
     bool hasCustomDictationKey_;
+    bool dictationTriggerHeld_;
+    bool dictationTriggerCombined_;
     /// 快捷键按下时保存的输入上下文指针，用于 commitText 在失焦后仍能提交文字。
     /// 事件处理线程和 DBus 处理线程都是 fcitx5 主事件循环，无竞态。
     /// 通过 InputContextDestroyed 事件监听 IC 销毁时自动清空指针。

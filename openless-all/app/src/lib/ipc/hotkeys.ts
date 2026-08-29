@@ -1,6 +1,12 @@
-import type { ComboBinding, HotkeyCapability, HotkeyStatus, ShortcutBinding, WindowsImeStatus } from "../types"
+import type { ComboBinding, HotkeyCapability, HotkeyStatus, ShortcutBinding, StylePackHotkey, WindowsImeStatus } from "../types"
 import { invokeOrMock, platformCapabilities, androidHotkeyStatus, androidHotkeyCapability, androidWindowsImeStatus } from "./shared"
-import { mockHotkeyStatus, mockHotkeyCapability, mockWindowsImeStatus } from "./mock-data"
+import {
+    mockHotkeyStatus,
+    mockHotkeyCapability,
+    mockSettings,
+    mockSetSettings,
+    mockWindowsImeStatus,
+} from "./mock-data"
 
 export function getHotkeyStatus(): Promise<HotkeyStatus> {
     return platformCapabilities().then((caps) => {
@@ -59,6 +65,14 @@ export function setDictationHotkey(binding: ShortcutBinding): Promise<void> {
     return invokeOrMock("set_dictation_hotkey", { binding }, () => undefined)
 }
 
+// binding = null 表示停用。Tauri 端持久化后，设置页会立即重新读取 prefs。
+export function setSelectionPolishHotkey(binding: ShortcutBinding | null): Promise<void> {
+    return invokeOrMock("set_selection_polish_hotkey", { binding }, () => {
+        mockSetSettings({ ...mockSettings, selectionPolishHotkey: binding })
+        return undefined
+    })
+}
+
 export function setTranslationHotkey(binding: ShortcutBinding): Promise<void> {
     return invokeOrMock("set_translation_hotkey", { binding }, () => undefined)
 }
@@ -70,6 +84,14 @@ export function setSwitchStyleHotkey(binding: ShortcutBinding | null): Promise<v
 
 export function setOpenAppHotkey(binding: ShortcutBinding | null): Promise<void> {
     return invokeOrMock("set_open_app_hotkey", { binding }, () => undefined)
+}
+
+// 风格包直达快捷键：整表替换（前端任何增删改都发全量列表，issue #759）。
+export function setStylePackHotkeys(hotkeys: StylePackHotkey[]): Promise<void> {
+    return invokeOrMock("set_style_pack_hotkeys", { hotkeys }, () => {
+        mockSetSettings({ ...mockSettings, stylePackHotkeys: hotkeys })
+        return undefined
+    })
 }
 
 export function setShortcutRecordingActive(active: boolean): Promise<void> {

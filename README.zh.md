@@ -16,7 +16,7 @@
 <p align="center">
   <a href="https://openless.top"><strong>官网</strong></a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/appergb/openless/releases/latest"><strong>下载</strong></a>
+  <a href="https://github.com/Open-Less/openless/releases/latest"><strong>下载</strong></a>
   &nbsp;·&nbsp;
   <a href="README.md">English</a>
   &nbsp;/&nbsp;
@@ -24,9 +24,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/appergb/openless/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/appergb/openless?style=flat-square&color=2c5282" /></a>
-  <a href="https://github.com/appergb/openless/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/appergb/openless?style=flat-square&color=2f855a" /></a>
-  <a href="https://github.com/appergb/openless/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/appergb/openless?style=flat-square&color=805ad5" /></a>
+  <a href="https://github.com/Open-Less/openless/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/Open-Less/openless?style=flat-square&color=2c5282" /></a>
+  <a href="https://github.com/Open-Less/openless/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/Open-Less/openless?style=flat-square&color=2f855a" /></a>
+  <a href="https://github.com/Open-Less/openless/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Open-Less/openless?style=flat-square&color=805ad5" /></a>
   <a href="https://discord.gg/vTZHTFGFm"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
 </p>
 
@@ -50,25 +50,6 @@
 </p>
 
 <p align="center">
-  <a href="https://jiangmuran.com/" target="_blank" rel="noopener">
-    <img src="assets/people/jiangmuran.png" width="120" height="120" alt="jiangmuran" />
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://jiangmuran.com/" target="_blank" rel="noopener"><strong>jiangmuran</strong></a><br/>
-  <sub>⭐ 特别赞助 · jiangmuran.com</sub>
-</p>
-
-<p align="center">
-  特别感谢 <strong>jiangmuran</strong> 长期以来的支持,让 OpenLess 得以不断向前。
-</p>
-
-<p align="center">
-  <sub>— 同时感谢 —</sub>
-</p>
-
-<p align="center">
   <a href="https://www.knin.net" target="_blank" rel="noopener">
     <img alt="悠雾云数据 (Youwu Cloud Data)" src="https://www.knin.net/upload/logo.png" height="52" />
   </a>
@@ -81,30 +62,44 @@
 <table align="center">
   <tr>
     <td align="center" width="170">
-      <a href="https://tripmc.top/" target="_blank" rel="noopener">
-        <img src="assets/people/tripmc.png" width="80" height="80" alt="TRIP" /><br/>
-        <strong>TRIP</strong>
-      </a><br/>
-      <sub>tripmc.top</sub>
+      <img src="assets/people/tripmc.png" width="80" height="80" alt="TRIP" /><br/>
+      <strong><a href="https://tripmc.top/" target="_blank" rel="noopener">TRIP</a></strong><br/>
+      <sub>作者</sub>
     </td>
     <td align="center" width="170">
-      <a href="https://chris233.qzz.io" target="_blank" rel="noopener">
-        <img src="assets/people/Chris233.png" width="80" height="80" alt="Chris233" /><br/>
-        <strong>Chris233</strong>
-      </a><br/>
-      <sub>chris233.qzz.io</sub>
+      <img src="assets/people/Chris233.png" width="80" height="80" alt="Chris233" /><br/>
+      <strong><a href="https://github.com/H-Chris233" target="_blank" rel="noopener">Chris233</a></strong><br/>
+      <sub>作者/维护者</sub>
     </td>
     <td align="center" width="170">
-      <a href="https://github.com/Cooper-X-Oak" target="_blank" rel="noopener">
-        <img src="assets/people/cooper.png" width="80" height="80" alt="Cooper" /><br/>
-        <strong>Cooper</strong>
-      </a><br/>
-      <sub>github.com/Cooper-X-Oak</sub>
+      <img
+        src="https://image.bigsong.site/file/1787214963742_b40cd86b033a60bcc8562f7f053c4900.jpg"
+        width="80"
+        height="80"
+        alt="bigsong"
+      /><br/>
+      <strong><a href="https://bigsong.site" target="_blank" rel="noopener">bigsong</a></strong><br/>
+      <sub>贡献者/测试</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="170">
+      <img src="https://github.com/HKLHaoBin.png" width="80" height="80" alt="HKLHaoBin" /><br/>
+      <strong><a href="https://github.com/HKLHaoBin" target="_blank" rel="noopener">HKLHaoBin</a></strong><br/>
+      <sub>安卓版作者</sub>
+    </td>
+    <td align="center" width="170">
+      <img src="assets/people/cooper.png" width="80" height="80" alt="Cooper" /><br/>
+      <strong><a href="https://github.com/Cooper-X-Oak" target="_blank" rel="noopener">Cooper</a></strong><br/>
+      <sub>贡献者</sub>
+    </td>
+    <td align="center" width="170">
+      <img src="https://github.com/aeoform.png" width="80" height="80" alt="aeoform" /><br/>
+      <strong><a href="https://github.com/aeoform" target="_blank" rel="noopener">aeoform</a></strong><br/>
+      <sub>贡献者</sub>
     </td>
   </tr>
 </table>
-
----
 
 OpenLess 是一款跨平台(macOS 与 Windows)语音输入应用,是 [Typeless](https://www.typeless.com/)、[Wispr Flow](https://wisprflow.ai)、[Lazy](https://heylazy.com)、Superwhisper 等商业工具的完全开源替代品。官网:[openless.top](https://openless.top)。
 
@@ -127,8 +122,9 @@ OpenLess 做的不是“更快的听写”,而是**消灭“想法 → 干净文
 
 ## ✨ 更新亮点
 
-下面两项能力,把过去每天都要重复的协调,进一步沉降成了默认规则:
+下面这些能力,把过去每天都要重复的协调,进一步沉降成了默认规则:
 
+- 📖 **会自己长的词典。** 在此之前,词典里只有你亲手敲进去的东西。现在,当你改掉 OpenLess 刚写出来的某个词,它会在屏幕角落弹一张小卡片问一声要不要记住,点一下就进去了。配合**光标上下文**(需手动开启,仅 macOS)——让润色模型读得到你光标周围正在写的内容——OpenLess 不再是一个靠猜同音词的转写工具,而开始成为**一个认得你的词的输入法**。每一条建议都由你过目,没有任何东西是悄悄学走的。
 - 🎨 **风格包市场(Style Pack Marketplace)。** OpenLess 不再只内置一种固定的“润色”语气。你可以用自定义系统提示词构建自己的**风格包**,用快捷键在它们之间切换,并**一键安装社区分享的风格包**——也可以发布自己的与他人分享。当风格与你的具体任务高度契合(冷启动邮件、commit message、小红书文案、正式报告、团队语气)时,产出的文本不只是更干净,而是*明显更好*,因为模型终于在按你真正想要的方式写作。
 - ⚡ **流式插入。** 文本现在会随润色**逐字符**写入光标,而不必等待完整结果生成。感知延迟大幅下降,听写几乎和思考一样快——当某个应用无法接受流式按键时,它会自动回退为一次性粘贴。
 
@@ -193,22 +189,22 @@ OpenLess 只做一件事:**把语音变成可用的书面文字(尤其是 AI 提
 
 | 工具 | 形态 | OpenLess 的不同之处 |
 | --- | --- | --- |
-| [Typeless](https://www.typeless.com/) | 闭源 macOS / Windows / iOS,订阅制 | 开源;显式的 AI 提示词模式;自带 ASR + LLM;数据与词典留在本机 |
+| [Typeless](https://www.typeless.com/) | 闭源 macOS / Windows / iOS,订阅制 | 开源;显式的 AI 提示词模式;自带 ASR + LLM;数据与词典留在本机——包括词典从你的手改中学到的东西,不上传,也不会在你确认之前加进去 |
 | [Wispr Flow](https://wisprflow.ai) | 闭源 macOS / Windows,订阅制 | 开源;自带 ASR + LLM;文本处理规则透明 |
 | [Lazy](https://heylazy.com) | 闭源的笔记 / 速记工具 | 不是笔记容器——直接插入到任意输入框 |
 | [Superwhisper](https://superwhisper.com) | 闭源 macOS,订阅制 | 开源;目前云端 ASR,本地 ASR 在路线图中 |
 
-## 当前状态(v1.3.6)
+## 当前状态
 
 下面每一项,都是一层已经沉降为默认、你授权一次之后就不必再操心的能力——这就是开屏之后你所站立的基础设施:
 
-- Tauri 2 后端(Rust)+ React/TypeScript 前端。macOS 12+、Windows 10+。
+- Tauri 2 后端(Rust)+ React/TypeScript 前端。macOS 14+、Windows 10+。
 - 🎨 **风格包市场**——在应用内的 Marketplace 浏览、安装、点赞社区**风格包**,并发布自己的(每个包一套自定义系统提示词,可用快捷键切换)。由经过审核的市场后端支撑;上传内容公开前会经过审核。
 - ⚡ **流式插入**——润色后的文本逐字符写入光标以降低感知延迟,并带有自动的一次性粘贴回退。可在 设置 → 录音 中切换。
 - **切换式与按住说话(push-to-talk)** 两种录音模式,外加 **MediaPlayPause 触发**,让有线耳机的线控也能开始 / 停止录音。`Esc` 可在任意阶段取消,包括润色与插入。
-- **云端 ASR**:Volcengine 流式 ASR、OpenAI Whisper 兼容的批量 ASR、Apple Speech(macOS)。
-- **本地 ASR**:通过 vendored 的 `Open-Less/qwen-asr` 内置 Qwen3-ASR(0.6B / 1.7B);Windows 上的 Foundry Local Whisper 变体。
-- **润色提供方**:Ark / DeepSeek / OpenAI / Doubao / Anthropic 兼容的 chat completions,以及你自带的任意 OpenAI 兼容端点。
+- **云端 ASR**:Volcengine 流式 ASR(bigasr)、讯飞实时语音转写(RTASR)、阿里云百炼(经典实时 / Qwen3 实时 / Fun-ASR-Flash 录音文件)、阶跃星辰 StepAudio(批式 + 实时)、智谱 GLM-ASR、小米 MiMo ASR、ElevenLabs Scribe、OpenAI 兼容批量转写(OpenAI Whisper / Groq / 硅基流动 SenseVoice / OpenRouter / ZenMux),以及 Apple Speech(macOS)。
+- **本地 ASR**:通过 vendored 的 `Open-Less/qwen-asr` 内置 Qwen3-ASR(0.6B / 1.7B)(macOS);Windows 上的 Foundry Local Whisper 与 sherpa-onnx(实验性)变体。
+- **润色提供方**:Ark(火山方舟)、DeepSeek、OpenAI、Google Gemini、Codex OAuth、硅基流动、Atlas Cloud、小米 MiMo、CometAPI、OpenRouter、阿里云 Coding Plan、CodingPlanX、MiniMax、StepFun,以及你自带的任意 OpenAI 兼容端点。
 - **四种输出模式**:原文、轻度润色、结构化(**AI 提示词模式**)、正式。另有一个**翻译快捷键**,将语音直接转换为所配置的目标语言([#43](../../issues/43))。
 - **选区问答面板**——一个独立快捷键打开浮动面板,针对任意应用中被高亮选中的文本进行语音问答([#118](../../issues/118))。
 - **主窗口**:概览 / 历史 / 词典 / 风格 / 市场 / 设置。常驻托盘图标,以及一个浮于屏幕、并跟随你正在输入的显示器的迷你状态胶囊(多显示器)。
@@ -218,7 +214,7 @@ OpenLess 只做一件事:**把语音变成可用的书面文字(尤其是 AI 提
 - **Beta 频道(可选加入)**——设置 → 关于 → 加入 Beta 频道,可下载最新预发布版本进行手动安装。Beta 版本绝不会自动推送给 Stable 用户(见[贡献流程](#贡献流程))。
 - **分发渠道**——从 [Releases](../../releases) 直接下载 DMG/EXE、Homebrew Cask(`brew install --cask openless`)、Windows 安装包。
 - **单实例锁**——防止两个 OpenLess 进程争抢同一个快捷键边沿。
-- 词典条目作为 Volcengine ASR 的 `context.hotwords` 注入,并在润色时作为语义提示;命中次数按会话累计。
+- 词典条目注入到支持热词的 ASR 提供方(Volcengine 的 `context.hotwords`、StepFun 的 `hotwords`、Whisper 兼容的 `prompt`(ZenMux 除外——其 JSON 协议不携带 `prompt`/`hotwords`)、百炼的 vocabulary_id),并在润色时作为语义提示;命中次数按会话累计。讯飞实时语音转写标准版没有请求级热词参数,需在讯飞控制台配置个性化热词。
 - 平台原生全局快捷键:macOS 上为 CGEventTap,Windows 上为低级键盘钩子(`WH_KEYBOARD_LL`)。
 
 ## 下载与安装(终端用户)
@@ -240,7 +236,7 @@ OpenLess 只做一件事:**把语音变成可用的书面文字(尤其是 AI 提
   - 不确定时执行 `adb shell getprop ro.product.cpu.abi`，下载对应 ABI 的包。
 - **macOS(Homebrew)**:
   ```bash
-  brew tap appergb/openless https://github.com/appergb/openless
+  brew tap Open-Less/openless https://github.com/Open-Less/openless
   brew install --cask openless
   xattr -cr /Applications/OpenLess.app
 
@@ -265,7 +261,11 @@ OpenLess 只做一件事:**把语音变成可用的书面文字(尤其是 AI 提
 
 ## 从源码构建(开发者)
 
-活跃的代码库位于 `openless-all/app/`(Tauri 2 + Rust + React/TS)。macOS 构建会链接一个 vendored 的 C 语言 ASR 引擎([`Open-Less/qwen-asr`](https://github.com/Open-Less/qwen-asr),fork 自 `antirez/qwen-asr`),它作为 git 子模块位于 `src-tauri/vendor/qwen-asr/`,因此首次克隆时需初始化子模块。
+活跃的代码库位于 `openless-all/app/`(Tauri 2 + Rust + React/TS)。macOS 构建会链接一个 vendored 的 C 语言 ASR 引擎([`Open-Less/qwen-asr`](https://github.com/Open-Less/qwen-asr),fork 自 `antirez/qwen-asr`),它作为 git 子模块位于 `src-tauri/vendor/qwen-asr/`,因此首次克隆时需初始化子模块。**递归初始化子模块在所有平台都是必需的**——macOS-only 的 `qwen3-asr-rs` path 依赖在 Windows/Linux 上也会被 Cargo 解析器读取(跳过它会让 `cargo check` 在解析阶段硬失败),Linux 构建还要编译 vendored C 引擎。
+
+Rust 1.88 是从源码构建所支持的最低工具链版本；建议使用最新 stable Rust。CI 会在 macOS、Windows 和 Linux 上同时验证 Rust 1.88 与 stable。
+
+Apple Silicon 编译可选的 Qwen3-ASR MLX 后端时需要 Xcode 的 MetalToolchain 组件。执行 `xcodebuild -downloadComponent MetalToolchain` 安装，并用 `xcrun --find metal` 验证。它只属于源码构建依赖，已打包的 OpenLess 应用运行时不需要该组件。
 
 ```bash
 # 仅首次克隆——拉取 vendored 子模块
@@ -337,6 +337,7 @@ Windows:       %APPDATA%\OpenLess\credentials.json
 你需要准备:
 
 - **Volcengine 流式 ASR**:APP ID、Access Token、Resource ID。
+- **讯飞实时语音转写（RTASR）**:AppID、API Key。见 [docs/xfyun-asr.md](docs/xfyun-asr.md)。
 - **Ark 润色**:API Key、Model ID、Endpoint。Ark 默认端点为 `https://ark.cn-beijing.volces.com/api/v3/chat/completions`。
 
 ## 文本处理原则
@@ -365,7 +366,16 @@ OpenLess 的润色模型只重塑文本。它不回答问题、不执行任务�
 - 手动添加正确拼写、分类与备注。你无需维护错误拼写或上下文提示。
 - 启用的条目作为 Volcengine ASR 的 `context.hotwords` 发送,以便在转写时被正确识别。
 - 条目同样注入润色提示词:模型逐句判断是否替换。如果“Cloud”在上下文中明显指 AI 产品 `Claude`,就会被纠正;如果它确实指云计算,则保持原样。
-- 应用会从你的历史中自动学习候选纠正(如 `Claude`、`ChatGPT`、`OpenLess`),并在之后向你推荐。
+- **词典会自己长。** 当你手动改掉 OpenLess 刚打出来的某个词,屏幕角落会弹一张小卡片问你要不要记住它。点一下勾就进去了——不用打开设置页,不用填表。**每一条都由你过目,没有任何东西是悄悄加进去的。** 需要开启下面的「光标上下文」,目前仅 macOS。
+- **真正在用的词优先。** 发给 ASR 的热词预算是有限的(几百字符)。条目按命中次数排序,并给刚手动添加的词留几个保底席位——这样你天天在用的那些词不会被「最近刚加的」挤出去。
+
+### 光标上下文(需手动开启,仅 macOS)
+
+设置 → 隐私 → 数据存储 → **光标上下文**。默认关闭。
+
+开启后,每次听写会读取**你正在写的那个应用里**光标附近的几百个字,随润色请求一起发出,让模型知道你在写什么。中文同音词(接口/借口、大鱼/大禹)声学模型分不出来,但上下文能分。词典的自我学习也建立在这之上——OpenLess 只有看得见自己刚打出去的文字,才可能发现你把某个词改掉了。
+
+**永远不读的地方**:密码输入框、macOS Secure Input、密码管理器、终端——这些在发出任何一次辅助功能调用之前就被拦下。开关关闭时,一次辅助功能调用都不会发生,提示词与没有这个功能的版本逐字节相同。
 
 主窗口组织为 首页 / 历史 / 词典 / 设置。点击“新建”时,词典页会打开一个独立的编辑窗口。首页展示总听写时长、总字数、平均每分钟字数、估算节省的时间,以及词典参与统计。
 
@@ -379,7 +389,7 @@ OpenLess 的润色模型只重塑文本。它不回答问题、不执行任务�
 types.rs         Pure value types: DictationSession, PolishMode, HotkeyBinding, errors
 hotkey.rs        Global hotkey (CGEventTap on macOS, WH_KEYBOARD_LL on Windows, rdev on Linux)
 recorder.rs      Mic → 16 kHz mono Int16 PCM, RMS callback
-asr/             Volcengine streaming ASR (WebSocket) + Whisper HTTP
+asr/             流式 ASR 客户端(Volcengine / Bailian / Qwen3 / StepFun / iFlytek 走 WebSocket)+ Whisper 兼容批量 HTTP
 polish.rs        OpenAI-compatible chat completions (Ark / DeepSeek / etc.)
 insertion.rs     AX focused-element → clipboard + Cmd+V → copy-only fallback
 persistence.rs   History / preferences / vocab JSON + platform credential vault
@@ -398,7 +408,6 @@ commands.rs      Tauri IPC surface
 
 已规划但尚未发布:
 
-- 听写翻译模式:按住一个独立快捷键,用你的语言说,插入为目标语言([#43](../../issues/43))。
 - 跨会话风格记忆:润色随时间学习用户的语气([#46](../../issues/46))。
 - 片段(Snippets,尚无 UI 或触发逻辑)。
 - 历史增强:复制按钮、搜索、重新润色、重新插入。

@@ -28,7 +28,10 @@ pub(crate) trait SettingsWriter {
     fn refresh_translation_hotkey(&self);
     fn refresh_switch_style_hotkey(&self);
     fn refresh_open_app_hotkey(&self);
+    fn refresh_selection_polish_hotkey(&self);
     fn refresh_coding_agent_hotkey(&self);
+    // 默认 no-op：测试 mock 不关心风格快捷键；真实实现（Coordinator / Arc<T>）覆写。
+    fn refresh_style_pack_hotkeys(&self) {}
 }
 
 impl SettingsWriter for Coordinator {
@@ -77,8 +80,20 @@ impl SettingsWriter for Coordinator {
         self.update_open_app_hotkey_binding();
     }
 
+    #[cfg(not(mobile))]
+    fn refresh_selection_polish_hotkey(&self) {
+        self.update_selection_polish_hotkey_binding();
+    }
+
+    #[cfg(mobile)]
+    fn refresh_selection_polish_hotkey(&self) {}
+
     fn refresh_coding_agent_hotkey(&self) {
         self.update_coding_agent_hotkey_binding();
+    }
+
+    fn refresh_style_pack_hotkeys(&self) {
+        self.update_style_pack_hotkey_bindings();
     }
 }
 
@@ -126,9 +141,163 @@ impl<T: SettingsWriter + ?Sized> SettingsWriter for Arc<T> {
         (**self).refresh_open_app_hotkey();
     }
 
+    fn refresh_selection_polish_hotkey(&self) {
+        (**self).refresh_selection_polish_hotkey();
+    }
+
     fn refresh_coding_agent_hotkey(&self) {
         (**self).refresh_coding_agent_hotkey();
     }
+
+    fn refresh_style_pack_hotkeys(&self) {
+        (**self).refresh_style_pack_hotkeys();
+    }
+}
+
+/// 非核心热键，用于保存兜底的冲突化解。dictation 是核心热键，永不参与调整。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NonCoreHotkey {
+    Translation,
+    Qa,
+    SwitchStyle,
+    OpenApp,
+    SelectionPolish,
+    LessComputer,
+}
+
+impl NonCoreHotkey {
+    fn get(&self, prefs: &UserPreferences) -> Option<ShortcutBinding> {
+        match self {
+            Self::Translation => Some(prefs.translation_hotkey.clone()),
+            Self::Qa => prefs.qa_hotkey.clone(),
+            Self::SwitchStyle => prefs.switch_style_hotkey.clone(),
+            Self::OpenApp => prefs.open_app_hotkey.clone(),
+            Self::SelectionPolish => prefs.selection_polish_hotkey.clone(),
+            Self::LessComputer => prefs.coding_agent_voice_hotkey.clone(),
+        }
+    }
+
+    fn set(&self, prefs: &mut UserPreferences, value: Option<ShortcutBinding>) {
+        match self {
+            // translation 是必填键，None 表示恢复失败时保持旧值不动。
+            Self::Translation => {
+                if let Some(value) = value {
+                    prefs.translation_hotkey = value;
+                }
+            }
+            Self::Qa => prefs.qa_hotkey = value,
+            Self::SwitchStyle => prefs.switch_style_hotkey = value,
+            Self::OpenApp => prefs.open_app_hotkey = value,
+            Self::SelectionPolish => prefs.selection_polish_hotkey = value,
+            Self::LessComputer => prefs.coding_agent_voice_hotkey = value,
+        }
+    }
+}
+
+/// 单个非核心热键是否非法。与 `reject_non_dictation_side_specific_shortcuts`
+/// 的逐键校验保持精确一致，避免把非冲突键一并停用。
+fn non_core_hotkey_invalid(key: NonCoreHotkey, binding: &ShortcutBinding) -> bool {
+    if crate::shortcut_binding::reject_side_specific_non_dictation(binding).is_err() {
+        return true;
+    }
+    match key {
+        NonCoreHotkey::SelectionPolish => {
+            crate::shortcut_binding::validate_binding(binding).is_err()
+                || reject_bare_shift_dictation_shortcut(binding).is_err()
+        }
+        _ => false,
+    }
+}
+
+/// 保存兜底（#904）：热键冲突不能把整份设置挡在保存之外。
+///
+/// 按核心度从高到低处理每个非核心热键：凡与更高优先级键重叠、或本身非法
+/// （侧特定修饰键等）的，恢复为旧值；旧值仍冲突/非法（历史遗留，例如 1.3.15
+/// 升级注入的选区润色默认键与录音键重复）时停用（translation 回退默认 Shift）。
+/// 返回被调整的键数量。dictation 永远保留，不参与调整。
+pub(crate) fn reconcile_hotkey_collisions(
+    prefs: &mut UserPreferences,
+    previous: &UserPreferences,
+) -> usize {
+    // 处理顺序 = 核心度从高到低：处理某项时，更高优先级的键已定稿。
+    const ORDER: [NonCoreHotkey; 6] = [
+        NonCoreHotkey::Translation,
+        NonCoreHotkey::Qa,
+        NonCoreHotkey::SwitchStyle,
+        NonCoreHotkey::OpenApp,
+        NonCoreHotkey::SelectionPolish,
+        NonCoreHotkey::LessComputer,
+    ];
+    let mut higher: Vec<ShortcutBinding> = vec![prefs.dictation_hotkey.clone()];
+    let mut adjusted = 0;
+    for key in ORDER {
+        let Some(current) = key.get(prefs) else {
+            continue;
+        };
+        let collides = higher
+            .iter()
+            .any(|held| crate::shortcut_binding::bindings_overlap(held, &current));
+        if !collides && !non_core_hotkey_invalid(key, &current) {
+            higher.push(current);
+            continue;
+        }
+        let fallback = key.get(previous).filter(|candidate| {
+            !higher
+                .iter()
+                .any(|held| crate::shortcut_binding::bindings_overlap(held, candidate))
+                && !non_core_hotkey_invalid(key, candidate)
+        });
+        // translation 不能停用：旧值仍冲突/非法时回退到默认 Shift（不会与任何键重叠）。
+        let resolved = if key == NonCoreHotkey::Translation && fallback.is_none() {
+            Some(UserPreferences::default().translation_hotkey.clone())
+        } else {
+            fallback
+        };
+        key.set(prefs, resolved.clone());
+        adjusted += 1;
+        if let Some(value) = resolved {
+            higher.push(value);
+        }
+    }
+    // 风格包直达快捷键是最低优先级：与更高优先级键重叠、非法或集合内重复的条目，
+    // 先尝试恢复该风格包的旧绑定，仍不行则整条移除（不影响其余设置落盘）。
+    let mut kept: Vec<StylePackHotkey> = Vec::new();
+    for entry in &prefs.style_pack_hotkeys {
+        let candidate_ok = |candidate: &StylePackHotkey| {
+            !candidate.pack_id.trim().is_empty()
+                && crate::shortcut_binding::validate_binding(&candidate.binding).is_ok()
+                && crate::shortcut_binding::reject_side_specific_non_dictation(&candidate.binding)
+                    .is_ok()
+                && reject_modifier_only_action_shortcut(&candidate.binding).is_ok()
+                && !kept.iter().any(|held: &StylePackHotkey| {
+                    held.pack_id == candidate.pack_id
+                        || crate::shortcut_binding::bindings_overlap(
+                            &held.binding,
+                            &candidate.binding,
+                        )
+                })
+                && !higher.iter().any(|held| {
+                    crate::shortcut_binding::bindings_overlap(held, &candidate.binding)
+                })
+        };
+        if candidate_ok(entry) {
+            kept.push(entry.clone());
+            continue;
+        }
+        adjusted += 1;
+        if let Some(fallback) = previous
+            .style_pack_hotkeys
+            .iter()
+            .find(|old| old.pack_id == entry.pack_id)
+            .filter(|old| candidate_ok(old))
+        {
+            kept.push(fallback.clone());
+        }
+    }
+    if kept != prefs.style_pack_hotkeys {
+        prefs.style_pack_hotkeys = kept;
+    }
+    adjusted
 }
 
 pub(crate) fn persist_settings<T: SettingsWriter>(
@@ -150,13 +319,26 @@ pub(crate) fn persist_settings_with_keyboard_apply<T: SettingsWriter>(
     let mut previous = coord.read_settings();
     sync_dictation_hotkey_legacy_fields(&mut previous);
     sync_dictation_hotkey_legacy_fields(&mut prefs);
-    reject_hotkey_collisions(&prefs)?;
+    if let Err(collision_error) = reject_hotkey_collisions(&prefs) {
+        // 兜底（#904）：热键冲突（含历史遗留的重复键）不能拒绝整份设置保存。
+        // 自动把冲突/非法的非核心热键恢复旧值或停用，其余设置照常落盘。
+        let adjusted = reconcile_hotkey_collisions(&mut prefs, &previous);
+        reject_hotkey_collisions(&prefs).map_err(|leftover| {
+            format!("{collision_error}; 自动化解 {adjusted} 项后仍无法通过校验: {leftover}")
+        })?;
+        log::warn!(
+            "[settings] 热键冲突已自动化解（调整 {adjusted} 项）后保存: {collision_error}"
+        );
+    }
     let dictation_shortcut_changed = previous.dictation_hotkey != prefs.dictation_hotkey;
     let dictation_mode_changed = previous.hotkey.mode != prefs.hotkey.mode;
     let qa_changed = previous.qa_hotkey != prefs.qa_hotkey;
     let translation_changed = previous.translation_hotkey != prefs.translation_hotkey;
     let switch_style_changed = previous.switch_style_hotkey != prefs.switch_style_hotkey;
     let open_app_changed = previous.open_app_hotkey != prefs.open_app_hotkey;
+    let style_pack_hotkeys_changed = previous.style_pack_hotkeys != prefs.style_pack_hotkeys;
+    let selection_polish_changed =
+        previous.selection_polish_hotkey != prefs.selection_polish_hotkey;
     let coding_agent_changed = previous.coding_agent_enabled != prefs.coding_agent_enabled
         || previous.coding_agent_voice_hotkey != prefs.coding_agent_voice_hotkey;
     let windows_keyboard_list_changed = previous.windows_sendinput_insertion_only
@@ -245,6 +427,12 @@ pub(crate) fn persist_settings_with_keyboard_apply<T: SettingsWriter>(
     if open_app_changed {
         coord.refresh_open_app_hotkey();
     }
+    if style_pack_hotkeys_changed {
+        coord.refresh_style_pack_hotkeys();
+    }
+    if selection_polish_changed {
+        coord.refresh_selection_polish_hotkey();
+    }
     if coding_agent_changed {
         coord.refresh_coding_agent_hotkey();
     }
@@ -269,6 +457,23 @@ pub fn set_settings(
     // 用户改键会让浮窗里的 "{recordHotkey}" 文案一直停留在旧值。
     persist_settings(&*coord, prefs)?;
     let prefs = coord.prefs().get();
+    // 保存即同步胶囊样式原子：下一次录音的入场帧就携带新样式，不依赖 emit_capsule
+    // 主线程闭包的 ~30Hz 同步（Windows 主线程拥塞时闭包延迟 → 整场显示旧样式）。
+    // 前端也会通过 prefs:changed 广播收到新样式，录音中切换即时换肤。
+    coord.sync_capsule_style_from_preferences();
+    // 系统代理开关变化时立即重建客户端连接池（issue #869）。
+    if remote_prev.use_system_proxy != prefs.use_system_proxy {
+        crate::net::set_use_system_proxy(prefs.use_system_proxy);
+    }
+    // 关掉「光标上下文」时立刻解除已经武装的手改观察器。
+    //
+    // 不这么做的话，上一次听写留下的观察器会一直活到它自己的 60 秒硬超时（或前台 app
+    // 切换）为止 —— 也就是用户明确关掉开关之后，我们还在读他正在写的那个文档，最长
+    // 一分钟。功能本身是否还有用不重要：**开关关掉的那一刻就该停**，这是这个功能敢
+    // 默认存在的全部前提。
+    if remote_prev.cursor_context_enabled && !prefs.cursor_context_enabled {
+        coord.disarm_edit_watch();
+    }
     #[cfg(target_os = "android")]
     coord.apply_android_overlay_settings_change(&remote_prev, &prefs);
     // refresh_tray_microphone_menu 内部会调用 NSStatusItem.set_menu，必须在主线程上跑。
@@ -313,6 +518,12 @@ pub fn set_settings(
     prefs.android_overlay_trigger = prefs.android_overlay_trigger.normalized();
     persist_settings(&*coord, prefs)?;
     let prefs = coord.prefs().get();
+    // 保存即同步胶囊样式原子（Android 通知胶囊 payload 同源，见 emit_capsule）。
+    coord.sync_capsule_style_from_preferences();
+    // 系统代理开关变化时立即重建客户端连接池（issue #869）。
+    if previous.use_system_proxy != prefs.use_system_proxy {
+        crate::net::set_use_system_proxy(prefs.use_system_proxy);
+    }
     #[cfg(target_os = "android")]
     coord.apply_android_overlay_settings_change(&previous, &prefs);
     let _ = app.emit("prefs:changed", &prefs);
@@ -360,6 +571,7 @@ mod tests {
         fn refresh_switch_style_hotkey(&self) {}
 
         fn refresh_open_app_hotkey(&self) {}
+        fn refresh_selection_polish_hotkey(&self) {}
 
         fn refresh_coding_agent_hotkey(&self) {}
     }
@@ -421,6 +633,97 @@ mod tests {
         assert_eq!(saved.default_mode, PolishMode::Light);
         assert_eq!(saved.microphone_device_name, "External Mic");
     }
+
+    #[test]
+    fn reconcile_clears_legacy_dictation_selection_polish_duplication() {
+        // #904 历史遗留：1.3.15 升级注入的选区润色默认键（右 Alt）与录音键相同。
+        let prefs = UserPreferences {
+            hotkey: crate::types::HotkeyBinding {
+                trigger: crate::types::HotkeyTrigger::RightAlt,
+                mode: crate::types::HotkeyMode::Hold,
+                keys: None,
+            },
+            dictation_hotkey: ShortcutBinding {
+                primary: "RightAlt".into(),
+                modifiers: vec![],
+            },
+            selection_polish_hotkey: Some(ShortcutBinding {
+                primary: "RightAlt".into(),
+                modifiers: vec![],
+            }),
+            ..Default::default()
+        };
+        let mut next = prefs.clone();
+
+        let adjusted = reconcile_hotkey_collisions(&mut next, &prefs);
+
+        assert!(adjusted >= 1);
+        assert!(next.selection_polish_hotkey.is_none());
+        assert!(reject_hotkey_collisions(&next).is_ok());
+    }
+
+    #[test]
+    fn persist_settings_reconciles_legacy_collision_and_still_saves_mode() {
+        // #904 复现：历史冲突存在时，用户切「自动」必须能保存成功，
+        // 冲突的选区润色键被停用，而不是整份设置被拒。
+        let collision = UserPreferences {
+            hotkey: crate::types::HotkeyBinding {
+                trigger: crate::types::HotkeyTrigger::RightAlt,
+                mode: crate::types::HotkeyMode::Hold,
+                keys: None,
+            },
+            dictation_hotkey: ShortcutBinding {
+                primary: "RightAlt".into(),
+                modifiers: vec![],
+            },
+            selection_polish_hotkey: Some(ShortcutBinding {
+                primary: "RightAlt".into(),
+                modifiers: vec![],
+            }),
+            ..Default::default()
+        };
+        let mut next = collision.clone();
+        next.hotkey.mode = crate::types::HotkeyMode::Auto;
+        let writer = RaceSettingsWriter {
+            reads: Mutex::new(vec![collision]),
+            saved: Mutex::new(None),
+        };
+
+        persist_settings_with_keyboard_apply(&writer, next, |_| Ok(())).unwrap();
+
+        let saved = writer.saved.lock().unwrap().clone().expect("prefs saved");
+        assert_eq!(saved.hotkey.mode, crate::types::HotkeyMode::Auto);
+        assert!(saved.selection_polish_hotkey.is_none());
+    }
+
+    #[test]
+    fn reconcile_resolves_non_core_overlap_and_invalid_side_specific_hotkey() {
+        // QA 与翻译键相同：较低优先级的 QA 恢复旧值，旧值仍冲突则停用。
+        let previous = UserPreferences {
+            qa_hotkey: Some(ShortcutBinding {
+                primary: "E".into(),
+                modifiers: vec!["ctrl".into(), "shift".into()],
+            }),
+            ..Default::default()
+        };
+        let mut next = previous.clone();
+        next.qa_hotkey = Some(ShortcutBinding {
+            primary: "Shift".into(),
+            modifiers: vec![],
+        });
+        // 侧特定修饰键对非 dictation 非法（SIDE_SPECIFIC_NON_DICTATION_MSG）。
+        next.translation_hotkey = ShortcutBinding {
+            primary: "D".into(),
+            modifiers: vec!["cmd-left".into()],
+        };
+
+        let adjusted = reconcile_hotkey_collisions(&mut next, &previous);
+
+        assert!(adjusted >= 2);
+        assert_eq!(next.qa_hotkey, previous.qa_hotkey);
+        assert_eq!(next.translation_hotkey, previous.translation_hotkey);
+        assert!(reject_hotkey_collisions(&next).is_ok());
+    }
 }
 
 // ─────────────────────────── release channel (Beta opt-in) ───────────────────────────
@@ -465,20 +768,20 @@ pub struct LatestBetaRelease {
     pub published_at: String,
 }
 
-/// 拉 GitHub Releases atom feed 找最新 Beta release（tag 以 `-beta-tauri` 结尾）。
+/// 拉 GitHub Releases atom feed 找最新 Beta release。
 ///
 /// 历史：之前用 `api.github.com/repos/.../releases` REST 端点，**未认证 60 req/h/IP**，
 /// 多人多次切 Beta toggle 很容易撞 403 rate limit（用户报"获取 Beta 版本信息失败"
 /// 即是这个）。换成 `releases.atom` 后是公开页面 + CDN cache，没有同等 rate 限制。
-/// Atom feed 不显式标 prerelease，但项目约定 tag 后缀 `-beta-tauri` 必为 Beta，
-/// 所以只用 tag 后缀过滤就够了。
+/// Atom feed 不显式标 prerelease，所以按当前 `-Beta.N-tauri` 约定过滤，同时兼容
+/// 历史 `-beta-tauri` 后缀。
 ///
 /// 返回 `Ok(None)` = 当前没发过 Beta 版；`Err(String)` = 网络/解析故障。
 #[tauri::command]
 pub async fn fetch_latest_beta_release() -> Result<Option<LatestBetaRelease>, String> {
     let resp = net::send_with_retry(|| {
         net::http()
-            .get("https://github.com/appergb/openless/releases.atom")
+            .get("https://github.com/Open-Less/openless/releases.atom")
             .timeout(std::time::Duration::from_secs(15))
     })
     .await
@@ -512,10 +815,10 @@ pub(crate) fn parse_latest_beta_from_atom(body: &str) -> Option<LatestBetaReleas
             .find(|c: char| c == '"' || c == '<' || c == ' ' || c == '/')
             .unwrap_or(tag_after.len());
         let tag_name = tag_after[..tag_end].to_string();
-        if !tag_name.ends_with("-beta-tauri") {
+        if !is_beta_release_tag(&tag_name) {
             continue;
         }
-        let html_url = format!("https://github.com/appergb/openless/releases/tag/{tag_name}");
+        let html_url = format!("https://github.com/Open-Less/openless/releases/tag/{tag_name}");
         let published_at =
             extract_between(entry_body, "<updated>", "</updated>").unwrap_or_default();
         return Some(LatestBetaRelease {
@@ -525,6 +828,31 @@ pub(crate) fn parse_latest_beta_from_atom(body: &str) -> Option<LatestBetaReleas
         });
     }
     None
+}
+
+fn is_beta_release_tag(tag_name: &str) -> bool {
+    if tag_name.ends_with("-beta-tauri") {
+        return true;
+    }
+
+    let Some((version, beta_number)) = tag_name
+        .strip_prefix('v')
+        .and_then(|tag| tag.strip_suffix("-tauri"))
+        .and_then(|tag| tag.split_once("-Beta."))
+    else {
+        return false;
+    };
+
+    if beta_number.is_empty() || !beta_number.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+
+    let mut version_parts = version.split('.');
+    (0..3).all(|_| {
+        version_parts
+            .next()
+            .is_some_and(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+    }) && version_parts.next().is_none()
 }
 
 fn extract_between(haystack: &str, open: &str, close: &str) -> Option<String> {
@@ -623,10 +951,10 @@ async fn resolve_beta_manifest_endpoints() -> Result<Vec<url::Url>, String> {
     // {{target}} / {{arch}} 占位符由 plugin 在 check 时替换。Rust raw string 用 r#""#
     // 不需要转义双花括号，比 format! 干净。
     let mirror = format!(
-        "https://fastgit.cc/https://github.com/appergb/openless/releases/download/{tag}/latest-{{{{target}}}}-{{{{arch}}}}-beta-mirror.json"
+        "https://fastgit.cc/https://github.com/Open-Less/openless/releases/download/{tag}/latest-{{{{target}}}}-{{{{arch}}}}-beta-mirror.json"
     );
     let direct = format!(
-        "https://github.com/appergb/openless/releases/download/{tag}/latest-{{{{target}}}}-{{{{arch}}}}-beta.json"
+        "https://github.com/Open-Less/openless/releases/download/{tag}/latest-{{{{target}}}}-{{{{arch}}}}-beta.json"
     );
     let mirror_url = url::Url::parse(&mirror).map_err(|e| format!("parse beta mirror url: {e}"))?;
     let direct_url = url::Url::parse(&direct).map_err(|e| format!("parse beta direct url: {e}"))?;
@@ -713,6 +1041,7 @@ mod persist_settings_tests {
         fn refresh_translation_hotkey(&self) {}
         fn refresh_switch_style_hotkey(&self) {}
         fn refresh_open_app_hotkey(&self) {}
+        fn refresh_selection_polish_hotkey(&self) {}
         fn refresh_coding_agent_hotkey(&self) {}
     }
 
@@ -869,8 +1198,8 @@ pub async fn app_download_and_install_android_update(
 ) -> Result<(), String> {
     // 安全：下载前校验 URL，防止 SSRF（如内网元数据接口、localhost 服务）。
     // 只允许已知的 GitHub 直链和 fastgit 镜像前缀。
-    const DIRECT_BASE: &str = "https://github.com/appergb/openless";
-    const MIRROR_BASE: &str = "https://fastgit.cc/https://github.com/appergb/openless";
+    const DIRECT_BASE: &str = "https://github.com/Open-Less/openless";
+    const MIRROR_BASE: &str = "https://fastgit.cc/https://github.com/Open-Less/openless";
     if !url.starts_with(DIRECT_BASE) && !url.starts_with(MIRROR_BASE) {
         return Err(format!("不信任的更新 URL，拒绝下载: {url}"));
     }

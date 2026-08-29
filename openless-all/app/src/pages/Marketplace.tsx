@@ -9,7 +9,7 @@
 //
 // 后端 URL 走 prefs.marketplaceBaseUrl，dev 模式默认 http://127.0.0.1:8090；
 // 用户在 Settings 填生产 URL 后客户端自动切换。
-// dev 上传需要 prefs.marketplaceDevLogin（GitHub login 风格）—— 空时上传按钮 disabled。
+// GitHub login 只用作展示；是否可写由 Rust 端凭据库中的 OAuth token 决定。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -20,12 +20,16 @@ import { ThinkingDots } from '../components/ThinkingDots';
 import { GithubLoginModal } from '../components/GithubLoginModal';
 import { Modal } from '../components/ui/Modal';
 import {
+  downloadMarketplacePack,
   fetchMarketplaceDetail,
   installMarketplacePack,
+  isTauri,
   likeMarketplacePack,
   listMarketplace,
   listStylePacks,
+  logClientError,
   marketplaceDelete,
+  marketplaceAuthStatus,
   marketplaceMyLikes,
   marketplaceMyPacks,
   readMarketplaceDetailCache,
@@ -36,12 +40,25 @@ import {
 } from '../lib/ipc';
 import { useHotkeySettings } from '../state/HotkeySettingsContext';
 import type { MarketplaceDetail, MarketplaceListItem, MarketplaceMyPackItem, StylePack } from '../lib/types';
+import {
+  canStartMarketplaceInstall,
+  isMarketplaceInstallActive,
+  isMarketplaceInstallErrorForPack,
+  shouldCloseMarketplaceDetail,
+  type MarketplaceInstallError,
+} from '../lib/marketplaceInstall';
+import { pickStylePackZipTargetPath, stylePackZipFileName } from '../lib/stylePackZip';
+import { useMobileLayout, useLayoutStack, useConservativeLayout } from '../lib/useMobileLayout';
 import { Btn, Card, PageHeader, Pill } from './_atoms';
 
 type SortMode = 'popular' | 'new' | 'liked';
 
 export function Marketplace() {
   const { t } = useTranslation();
+  const mobile = useMobileLayout();
+  const baseLayoutStack = useLayoutStack();
+  const conservative = useConservativeLayout();
+  const stackLayout = conservative || baseLayoutStack;
   const { prefs, updatePrefs } = useHotkeySettings();
 
   // 启动时尝试读缓存：上次默认视图（popular + 空 query）的列表，秒呈现。后台 refresh 校准。
@@ -55,6 +72,9 @@ export function Marketplace() {
   const [detail, setDetail] = useState<MarketplaceDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [actionMsg, setActionMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [installingPackId, setInstallingPackId] = useState<string | null>(null);
+  const [downloadingPackId, setDownloadingPackId] = useState<string | null>(null);
+  const [installError, setInstallError] = useState<MarketplaceInstallError | null>(null);
 
   const [showUpload, setShowUpload] = useState(false);
   const [uploadOriginPackId, setUploadOriginPackId] = useState<string | null>(null);
@@ -77,8 +97,27 @@ export function Marketplace() {
   // 当前用户赞过的 pack id 集合 —— 用于红心渲染 + 「我赞过的」过滤。
   // 进入 marketplace 时拉一次；点星后本地 mutate。
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
-  const canUpload = (prefs?.marketplaceDevLogin ?? '').trim().length > 0;
   const currentLogin = (prefs?.marketplaceDevLogin ?? '').trim();
+  const [marketplaceSignedIn, setMarketplaceSignedIn] = useState(false);
+  const authorizedLogin = marketplaceSignedIn ? currentLogin : '';
+  const canUpload = marketplaceSignedIn;
+  const refreshAuthStatus = useCallback(async () => {
+    try {
+      const status = await marketplaceAuthStatus();
+      setMarketplaceSignedIn(status.signedIn);
+      if (!status.signedIn) {
+        setLikedIds(new Set());
+        setMyPacks([]);
+        if (currentLogin) {
+          await updatePrefs(current => ({ ...current, marketplaceDevLogin: '' }));
+        }
+      }
+      return status.signedIn;
+    } catch {
+      setMarketplaceSignedIn(false);
+      return false;
+    }
+  }, [currentLogin, updatePrefs]);
   // 「衍生自」只在 origin 作者 != 当前登录身份时显示 —— 自己的 pack 不要给自己挂衍生标签。
   const isDerivative = (originLogin: string | null | undefined): boolean =>
     !!originLogin && originLogin !== currentLogin;
@@ -142,22 +181,31 @@ export function Marketplace() {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    void refreshAuthStatus();
+  }, [currentLogin, refreshAuthStatus]);
+
   // 拉一次「我赞过的」缓存，渲染红心 + 「我赞过的」过滤。登录身份变更时重拉。
   useEffect(() => {
     let cancelled = false;
+    if (!marketplaceSignedIn) {
+      setLikedIds(new Set());
+      return () => { cancelled = true; };
+    }
     void (async () => {
       try {
         const ids = await marketplaceMyLikes();
         if (!cancelled) setLikedIds(new Set(ids));
       } catch (error) {
+        void refreshAuthStatus();
         console.warn('[marketplace] fetch my-likes failed', error);
       }
     })();
     return () => { cancelled = true; };
-  }, [currentLogin]);
+  }, [marketplaceSignedIn, refreshAuthStatus]);
 
   const refreshMyPacks = useCallback(async () => {
-    if (!currentLogin) {
+    if (!marketplaceSignedIn) {
       setMyPacks([]);
       setMyPacksLoading(false);
       setMyPacksError(null);
@@ -169,6 +217,7 @@ export function Marketplace() {
       const packs = await marketplaceMyPacks();
       setMyPacks(packs);
     } catch (error) {
+      void refreshAuthStatus();
       console.warn('[marketplace] fetch my-packs failed', error);
       const msg = errorMessage(error);
       setMyPacksError(msg);
@@ -177,7 +226,7 @@ export function Marketplace() {
     } finally {
       setMyPacksLoading(false);
     }
-  }, [currentLogin, t]);
+  }, [marketplaceSignedIn, refreshAuthStatus, t]);
 
   useEffect(() => {
     void refreshMyPacks();
@@ -185,16 +234,17 @@ export function Marketplace() {
 
   // 弹框打开时刷新一次「我的发布」，避免显示陈旧数据。
   useEffect(() => {
-    if (showMyPacks && currentLogin) {
+    if (showMyPacks && marketplaceSignedIn) {
       void refreshMyPacks();
     }
-  }, [showMyPacks, currentLogin, refreshMyPacks]);
+  }, [showMyPacks, marketplaceSignedIn, refreshMyPacks]);
 
   const openDetail = async (id: string) => {
     const seq = ++detailSeqRef.current;
     setSelectedId(id);
     setDetail(null);
     setDetailLoading(true);
+    setInstallError(previous => previous?.packId === id ? previous : null);
     // 差量缓存命中：list 已经带 version+updatedAt，按三元组匹配本机 detail。
     // 命中 = 直接渲染、跳过网络；未命中 = 走 fetchMarketplaceDetail。
     const listItem = items.find(it => it.id === id);
@@ -229,18 +279,51 @@ export function Marketplace() {
   };
 
   const onInstall = async () => {
-    if (!detail) return;
+    if (!detail || !canStartMarketplaceInstall(installingPackId)) return;
+    const packId = detail.id;
+    const packName = detail.name;
+    setInstallingPackId(packId);
+    setInstallError(null);
+    let clientFailureLog: string | null = null;
     try {
-      await installMarketplacePack(detail.id);
-      setActionMsg({ kind: 'ok', text: t('marketplace.installed', { name: detail.name }) });
-      setSelectedId(null);
+      await installMarketplacePack(packId);
+      setActionMsg({ kind: 'ok', text: t('marketplace.installed', { name: packName }) });
+      setSelectedId(current => shouldCloseMarketplaceDetail(current, packId) ? null : current);
     } catch (error) {
-      setActionMsg({ kind: 'err', text: t('marketplace.errors.install', { err: errorMessage(error) }) });
+      const errorText = errorMessage(error);
+      const message = t('marketplace.errors.install', { err: errorText });
+      setInstallError({ packId, message });
+      setActionMsg({ kind: 'err', text: message });
+      clientFailureLog = `[marketplace-install] stage=ipc-failed pack_id=${packId} error=${errorText}`;
+    } finally {
+      setInstallingPackId(current => current === packId ? null : current);
+      if (clientFailureLog) void logClientError(clientFailureLog);
+    }
+  };
+
+  const onDownload = async (pack: MarketplaceListItem) => {
+    if (downloadingPackId !== null) return;
+    setDownloadingPackId(pack.id);
+    try {
+      const defaultName = stylePackZipFileName(pack.name, pack.version);
+      const targetPath = await pickStylePackZipTargetPath(defaultName, isTauri);
+      if (!targetPath) return;
+      await downloadMarketplacePack(pack.id, targetPath);
+      setActionMsg({ kind: 'ok', text: t('marketplace.downloaded', { name: pack.name }) });
+    } catch (error) {
+      setActionMsg({ kind: 'err', text: t('marketplace.errors.download', { err: errorMessage(error) }) });
+    } finally {
+      setDownloadingPackId(current => current === pack.id ? null : current);
     }
   };
 
   const onLike = async () => {
     if (!detail) return;
+    if (!marketplaceSignedIn) {
+      setActionMsg({ kind: 'err', text: t('marketplace.myPacks.notLoggedIn') });
+      setShowLogin(true);
+      return;
+    }
     const packId = detail.id;
     const prevLikedIds = likedIds;
     const prevLikeCount = detail.likeCount;
@@ -267,6 +350,7 @@ export function Marketplace() {
         return next;
       });
     } catch (error) {
+      void refreshAuthStatus();
       // rollback 到点击前的状态
       setLikedIds(prevLikedIds);
       setDetail(prev => (prev && prev.id === packId ? { ...prev, likeCount: prevLikeCount } : prev));
@@ -315,6 +399,7 @@ export function Marketplace() {
       setItems(prev => prev.filter(p => p.id !== detail.id));
       void refresh();
     } catch (error) {
+      void refreshAuthStatus();
       setActionMsg({ kind: 'err', text: t('marketplace.detail.withdrawFailed', { err: errorMessage(error) }) });
     }
   };
@@ -330,6 +415,7 @@ export function Marketplace() {
       setItems(prev => prev.filter(p => p.id !== pack.id));
       void refreshMyPacks();
     } catch (error) {
+      void refreshAuthStatus();
       setActionMsg({ kind: 'err', text: t('marketplace.detail.withdrawFailed', { err: errorMessage(error) }) });
     }
   };
@@ -389,12 +475,14 @@ export function Marketplace() {
       // 这里只需单次兜底刷新；取较长延时（5s）确保后端最终一致后能查到，去掉冗余的 1.5s 那次。
       window.setTimeout(() => { void refresh(); void refreshMyPacks(); }, 5000);
     } catch (error) {
+      void refreshAuthStatus();
       setActionMsg({ kind: 'err', text: t('marketplace.errors.upload', { err: errorMessage(error) }) });
     }
   };
 
-  // GitHub 登录成功 → 写回 prefs.marketplaceDevLogin，让后续 X-Dev-User 走真实身份。
+  // GitHub 登录成功后 Rust 已保存 token；prefs 只缓存 login 供界面展示。
   const onLoginSuccess = useCallback((nextLogin: string) => {
+    setMarketplaceSignedIn(true);
     // prefs 写入失败只 console 记一笔（与重构前的 OAuth 轮询一致）—— 不能裸 void，
     // 否则 reject 会冒成未处理的 promise rejection。
     void updatePrefs(current => ({ ...current, marketplaceDevLogin: nextLogin }))
@@ -422,7 +510,7 @@ export function Marketplace() {
             <button
               type="button"
               onClick={() => setShowMyPacks(true)}
-              title={currentLogin ? t('marketplace.myPacks.buttonTitle', { login: currentLogin }) : t('marketplace.myPacks.buttonTitleEmpty')}
+              title={authorizedLogin ? t('marketplace.myPacks.buttonTitle', { login: authorizedLogin }) : t('marketplace.myPacks.buttonTitleEmpty')}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 8,
                 height: 30, padding: '0 12px', borderRadius: 9,
@@ -440,7 +528,7 @@ export function Marketplace() {
                 background: 'var(--ol-surface-2)',
                 fontSize: 10, fontWeight: 750,
               }}>
-                {(currentLogin || '?').slice(0, 1).toUpperCase()}
+                {(authorizedLogin || '?').slice(0, 1).toUpperCase()}
               </span>
               <span>{t('marketplace.myPacks.buttonLabel')}</span>
             </button>
@@ -453,10 +541,12 @@ export function Marketplace() {
 
       {/* 顶部搜索 + 排序 */}
       <div
+        className="ol-flex-row"
         style={{
           display: 'flex',
           gap: 10,
-          alignItems: 'center',
+          alignItems: stackLayout ? 'stretch' : 'center',
+          flexDirection: stackLayout ? 'column' : 'row',
           padding: '4px 0 14px',
         }}
       >
@@ -488,7 +578,7 @@ export function Marketplace() {
             }}
           />
         </div>
-        <div style={{ display: 'flex', gap: 4 }}>
+        <div className="ol-flex-row ol-flex-split" style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
           {sortPills.map(p => (
             <button
               key={p.id}
@@ -559,58 +649,101 @@ export function Marketplace() {
             </div>
           </Card>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+          <div className="ol-grid-auto-cards" style={{ display: 'grid', gridTemplateColumns: stackLayout ? '1fr' : 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
             <AnimatePresence mode="sync">
-            {visibleItems.map(p => (
-              <motion.button
-                layout
-                initial={{ opacity: 0, scale: 0.85 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.85 }}
-                transition={{
-                  layout: { type: 'spring', damping: 25, stiffness: 220 },
-                  opacity: { duration: 0.2 },
-                  scale: { duration: 0.2 }
-                }}
-                key={p.id}
-                onClick={() => void openDetail(p.id)}
-                style={{
-                  textAlign: 'left',
-                  padding: 14,
-                  borderRadius: 12,
-                  border: '0.5px solid var(--ol-line-strong)',
-                  background: 'var(--ol-surface)',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 6,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 6 }}>
-                  <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--ol-ink-1)' }}>{p.name}</span>
-                  <span style={{ fontSize: 10, color: 'var(--ol-ink-4)', fontFamily: 'var(--ol-font-mono)' }}>v{p.version}</span>
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--ol-ink-3)', lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', minHeight: 36 }}>
-                  {p.description || t('marketplace.noDescription')}
-                </div>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
-                  <Pill size="sm" tone="outline">{p.baseMode}</Pill>
-                  {isDerivative(p.originAuthorLogin) && (
-                    <span title={t('marketplace.derivativeBadge', { login: p.originAuthorLogin })}>
-                      <Pill size="sm" tone="ok">{t('marketplace.derivativeBadge', { login: p.originAuthorLogin })}</Pill>
-                    </span>
-                  )}
-                  {p.tags.slice(0, 2).map(tag => <Pill key={tag} size="sm" tone="default">{tag}</Pill>)}
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--ol-ink-4)', marginTop: 4 }}>
-                  <span style={{ fontWeight: 500, color: 'var(--ol-ink-3)' }}>@{p.authorLogin}</span>
-                  <span>
-                    <span style={{ color: likedIds.has(p.id) ? '#ef4444' : 'var(--ol-ink-4)' }}>{likedIds.has(p.id) ? '★' : '☆'}</span>
-                    {' '}{p.likeCount} · ↓ {p.downloadCount}
-                  </span>
-                </div>
-              </motion.button>
-            ))}
+              {visibleItems.map(p => {
+                const isDownloading = downloadingPackId === p.id;
+                return (
+                  <motion.article
+                    layout
+                    initial={{ opacity: 0, scale: 0.85 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.85 }}
+                    transition={{
+                      layout: { type: 'spring', damping: 25, stiffness: 220 },
+                      opacity: { duration: 0.2 },
+                      scale: { duration: 0.2 }
+                    }}
+                    key={p.id}
+                    style={{
+                      borderRadius: 12,
+                      border: '0.5px solid var(--ol-line-strong)',
+                      background: 'var(--ol-surface)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => void openDetail(p.id)}
+                      style={{
+                        width: '100%',
+                        flex: 1,
+                        textAlign: 'left',
+                        padding: 14,
+                        border: 'none',
+                        background: 'transparent',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 6,
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 6 }}>
+                        <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--ol-ink-1)' }}>{p.name}</span>
+                        <span style={{ fontSize: 10, color: 'var(--ol-ink-4)', fontFamily: 'var(--ol-font-mono)' }}>v{p.version}</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--ol-ink-3)', lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', minHeight: 36 }}>
+                        {p.description || t('marketplace.noDescription')}
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
+                        <Pill size="sm" tone="outline">{p.baseMode}</Pill>
+                        {isDerivative(p.originAuthorLogin) && (
+                          <span title={t('marketplace.derivativeBadge', { login: p.originAuthorLogin })}>
+                            <Pill size="sm" tone="ok">{t('marketplace.derivativeBadge', { login: p.originAuthorLogin })}</Pill>
+                          </span>
+                        )}
+                        {p.tags.slice(0, 2).map(tag => <Pill key={tag} size="sm" tone="default">{tag}</Pill>)}
+                      </div>
+                    </button>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: '0 14px 12px', fontSize: 11, color: 'var(--ol-ink-4)' }}>
+                      <span style={{ fontWeight: 500, color: 'var(--ol-ink-3)' }}>@{p.authorLogin}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span>
+                          <span style={{ color: likedIds.has(p.id) ? '#ef4444' : 'var(--ol-ink-4)' }}>{likedIds.has(p.id) ? '★' : '☆'}</span>
+                          {' '}{p.likeCount} · ↓ {p.downloadCount}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={downloadingPackId !== null}
+                          aria-label={t('marketplace.downloadAria', { name: p.name })}
+                          title={t('marketplace.downloadAria', { name: p.name })}
+                          onClick={() => void onDownload(p)}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            padding: '4px 7px',
+                            borderRadius: 7,
+                            border: '0.5px solid var(--ol-line-strong)',
+                            background: 'var(--ol-surface-2)',
+                            color: 'var(--ol-ink-2)',
+                            cursor: downloadingPackId === null ? 'pointer' : 'not-allowed',
+                            opacity: downloadingPackId !== null && !isDownloading ? 0.5 : 1,
+                            fontSize: 10,
+                            fontWeight: 600,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          <Icon name="download" size={12} />
+                          {isDownloading ? t('marketplace.downloadingZipBtn') : t('marketplace.downloadZipBtn')}
+                        </button>
+                      </div>
+                    </div>
+                  </motion.article>
+                );
+              })}
             </AnimatePresence>
           </div>
         )}
@@ -618,7 +751,7 @@ export function Marketplace() {
 
       {/* 详情弹窗 */}
       {selectedId && (
-        <Modal onClose={() => setSelectedId(null)}>
+        <Modal zIndex={mobile || stackLayout ? 70 : 50} onClose={() => { setSelectedId(null); setInstallError(null); }}>
           {detailLoading || !detail ? (
             <div
               style={{
@@ -678,9 +811,14 @@ export function Marketplace() {
               >
                 {detail.prompt}
               </div>
+              {isMarketplaceInstallErrorForPack(installError, detail.id) && (
+                <div role="alert" style={{ color: '#ef4444', fontSize: 12, whiteSpace: 'normal', overflowWrap: 'anywhere', marginBottom: 10 }}>
+                  {installError.message}
+                </div>
+              )}
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
                 <div>
-                  {detail.authorLogin === currentLogin && currentLogin.length > 0 && (
+                  {marketplaceSignedIn && detail.authorLogin === currentLogin && currentLogin.length > 0 && (
                     <Btn variant="ghost" size="sm" onClick={() => void onDelete()}>
                       <span style={{ color: '#ef4444', marginRight: 4 }}>🗑</span>
                       {t('marketplace.detail.withdrawBtn')}
@@ -692,6 +830,7 @@ export function Marketplace() {
                     whileTap={{ scale: 0.75 }}
                     transition={{ type: 'spring', stiffness: 400, damping: 17 }}
                     onClick={() => void onLike()}
+                    aria-label={marketplaceSignedIn ? undefined : t('marketplace.oauth.loginBtn')}
                     style={{
                       display: 'inline-flex',
                       alignItems: 'center',
@@ -717,11 +856,18 @@ export function Marketplace() {
                     </span>
                     {detail.likeCount}
                   </motion.button>
-                  <Btn variant="ghost" size="sm" onClick={() => setSelectedId(null)}>
-                    {t('common.cancel')}
+                  <Btn variant="ghost" size="sm" onClick={() => { setSelectedId(null); setInstallError(null); }}>
+                    {installingPackId !== null ? t('common.close') : t('common.cancel')}
                   </Btn>
-                  <Btn variant="blue" size="sm" onClick={() => void onInstall()}>
-                    {t('marketplace.installBtn')}
+                  <Btn
+                    variant="blue"
+                    size="sm"
+                    disabled={!canStartMarketplaceInstall(installingPackId)}
+                    onClick={() => void onInstall()}
+                  >
+                    {isMarketplaceInstallActive(installingPackId, detail.id)
+                      ? t('marketplace.installingBtn')
+                      : t('marketplace.installBtn')}
                   </Btn>
                 </div>
               </div>
@@ -733,7 +879,7 @@ export function Marketplace() {
       {/* 上传选包器 —— zIndex 60 让它叠在「我的发布」(zIndex 50) 之上 */}
       {showUpload && (
         <Modal
-          zIndex={60}
+          zIndex={mobile || stackLayout ? 70 : 60}
           onClose={() => {
             setShowUpload(false);
             setUploadOriginPackId(null);
@@ -823,7 +969,7 @@ export function Marketplace() {
 
       {/* 我的发布 · 弹框形态（叠在风格市场页面之上）*/}
       {showMyPacks && (
-        <Modal onClose={() => setShowMyPacks(false)}>
+        <Modal zIndex={mobile || stackLayout ? 70 : 50} onClose={() => setShowMyPacks(false)}>
           {/* 顶部一行：搜索 (左) + 用户名/登录 (中) + 关闭 × (右) */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
             {/* 搜索框 (最左) */}
@@ -860,14 +1006,14 @@ export function Marketplace() {
                 已登录时再点会重新走一次（切账号）。 */}
             <button
               type="button"
-              title={currentLogin ? t('marketplace.oauth.reloginTooltip', { login: currentLogin }) : t('marketplace.oauth.loginTooltip')}
+              title={authorizedLogin ? t('marketplace.oauth.reloginTooltip', { login: authorizedLogin }) : t('marketplace.oauth.loginTooltip')}
               onClick={() => setShowLogin(true)}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6,
                 padding: '5px 10px', borderRadius: 9,
                 border: '0.5px solid var(--ol-line-strong)',
-                background: currentLogin ? 'var(--ol-blue-soft)' : 'var(--ol-surface)',
-                color: currentLogin ? 'var(--ol-blue)' : 'var(--ol-ink-3)',
+                background: authorizedLogin ? 'var(--ol-blue-soft)' : 'var(--ol-surface)',
+                color: authorizedLogin ? 'var(--ol-blue)' : 'var(--ol-ink-3)',
                 fontSize: 12, fontWeight: 650,
                 cursor: 'pointer',
                 whiteSpace: 'nowrap',
@@ -876,12 +1022,12 @@ export function Marketplace() {
               <span style={{
                 width: 18, height: 18, borderRadius: 999,
                 display: 'inline-grid', placeItems: 'center',
-                background: currentLogin ? 'rgba(37,99,235,0.14)' : 'var(--ol-surface-2)',
+                background: authorizedLogin ? 'rgba(37,99,235,0.14)' : 'var(--ol-surface-2)',
                 fontSize: 10, fontWeight: 750,
               }}>
-                {(currentLogin || '?').slice(0, 1).toUpperCase()}
+                {(authorizedLogin || '?').slice(0, 1).toUpperCase()}
               </span>
-              <span>{currentLogin ? `@${currentLogin}` : t('marketplace.oauth.loginBtn')}</span>
+              <span>{authorizedLogin ? `@${authorizedLogin}` : t('marketplace.oauth.loginBtn')}</span>
             </button>
             {/* 关闭 × */}
             <button
@@ -909,7 +1055,7 @@ export function Marketplace() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
             <div style={{ fontSize: 11.5, color: 'var(--ol-ink-3)' }}>
               {(() => {
-                if (!currentLogin) return t('marketplace.myPacks.notLoggedIn');
+                if (!marketplaceSignedIn) return t('marketplace.myPacks.notLoggedIn');
                 const activeCount = visibleMyPacks.length;
                 const pendingCount = visibleMyPacks.filter(p => p.state === 'pending').length;
                 return pendingCount > 0
@@ -918,7 +1064,7 @@ export function Marketplace() {
               })()}
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
-              <Btn icon="refresh" variant="ghost" size="sm" onClick={() => void refreshMyPacks()} disabled={!currentLogin || myPacksLoading}>
+              <Btn icon="refresh" variant="ghost" size="sm" onClick={() => void refreshMyPacks()} disabled={!marketplaceSignedIn || myPacksLoading}>
                 {t('common.refresh')}
               </Btn>
               <span title={canUpload ? '' : t('marketplace.uploadDisabledHint')}>
@@ -965,11 +1111,11 @@ export function Marketplace() {
               return (
                 <div style={{ padding: '32px 12px', textAlign: 'center' }}>
                   <div style={{ fontSize: 13, color: 'var(--ol-ink-3)', marginBottom: 6 }}>
-                    {currentLogin
+                    {marketplaceSignedIn
                       ? (myPacks.length === 0 ? t('marketplace.myPacks.emptyTitle') : t('marketplace.myPacks.noMatch'))
                       : t('marketplace.myPacks.notLoggedIn')}
                   </div>
-                  {currentLogin && myPacks.length === 0 && (
+                  {marketplaceSignedIn && myPacks.length === 0 && (
                     <div style={{ fontSize: 11, color: 'var(--ol-ink-4)' }}>
                       {t('marketplace.myPacks.emptyHint')}
                     </div>

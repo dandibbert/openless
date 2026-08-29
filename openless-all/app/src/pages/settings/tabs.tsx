@@ -4,15 +4,20 @@
 import { useTranslation } from 'react-i18next';
 import { useEffect, useState } from 'react';
 import { RecordingInputSection } from './RecordingInputSection';
+import { RemoteInputSection } from './RemoteInputSection';
 import { ShortcutsSection } from './ShortcutsSection';
+import { SelectionWorkspaceSection } from './SelectionWorkspaceSection';
 import { LanguageSection } from './LanguageSection';
 import { ThemeSection } from './ThemeSection';
-import { ProvidersSection } from './ProvidersSection';
+import { LayoutSection } from './LayoutSection';
+import { ProvidersSection } from './ChannelList';
+import { NetworkSection } from './NetworkSection';
 import { MarketplaceSection } from './MarketplaceSection';
 import { PermissionsSection } from './PermissionsSection';
 import { DataStorageSection } from './DataStorageSection';
 import { LocalModelSection } from './LocalModelSection';
 import { DebugToolsSection } from './DebugToolsSection';
+import { MultimodalPipelineSection } from './MultimodalPipelineSection';
 import { CodingAgentSection } from './CodingAgentSection';
 import { ClaudeConsoleSection } from './ClaudeConsoleSection';
 import { BetaChannelSection } from './BetaChannelSection';
@@ -33,14 +38,18 @@ function usePlatformCaps(): PlatformCapabilities | null {
   return platformCaps;
 }
 
-// 通用：录音与输入 · 快捷键 · 主题 · 语言。
+// 通用：录音与输入 · 远程输入 · 快捷键 · 主题 · 语言。
 export function GeneralTab() {
   const platformCaps = usePlatformCaps();
   const showDesktopShortcuts = platformCaps?.supportsDesktopHotkey === true;
+  const showRemoteInput = platformCaps?.platform === 'desktop';
 
   return (
     <>
       <RecordingInputSection />
+      <LayoutSection />
+      {showRemoteInput && <RemoteInputSection />}
+      <SelectionWorkspaceSection />
       {showDesktopShortcuts && <ShortcutsSection />}
       <ThemeSection />
       <LanguageSection />
@@ -58,6 +67,7 @@ export function ServicesTab() {
   return (
     <>
       <ProvidersSection />
+      <NetworkSection />
       {showLocalModel && <LocalModelSection />}
       <MarketplaceSection />
     </>
@@ -99,16 +109,22 @@ export function PrivacyTab() {
 
 // 高级：只留真正的实验性/开发者功能 —— Less Computer · Claude 控制台 · 调试工具。
 // （本地模型移入「服务」、更新相关移入「关于」，这个 tab 不再是杂物抽屉。）
+// 调试工具本身是跨端的：Android 复用同一份 prefs / 录音导出入口；
+// 这里只做平台 gating，不把桌面特有能力耦合进移动端运行时。
 export function AdvancedTab() {
   const os = detectOS();
   const platformCaps = usePlatformCaps();
   const showDesktopAdvanced = platformCaps?.platform === 'desktop';
+  const showDebugTools =
+    platformCaps?.platform === 'desktop' || platformCaps?.platform === 'android';
 
   return (
     <>
-      {showDesktopAdvanced && os !== 'win' && <CodingAgentSection />}
-      {showDesktopAdvanced && os !== 'win' && <ClaudeConsoleSection />}
-      {showDesktopAdvanced && <DebugToolsSection />}
+      {/* Less Computer / Claude 控制台仅 macOS 开放：后端只在 macOS 注册热键/创建窗口 */}
+      {showDesktopAdvanced && os === 'mac' && <CodingAgentSection />}
+      {showDesktopAdvanced && os === 'mac' && <ClaudeConsoleSection />}
+      <MultimodalPipelineSection />
+      {showDebugTools && <DebugToolsSection />}
     </>
   );
 }

@@ -48,6 +48,9 @@ export function Vocab() {
   const [presetNameDraft, setPresetNameDraft] = useState('');
   const [presetPhrasesDraft, setPresetPhrasesDraft] = useState('');
   const [correctionRules, setCorrectionRules] = useState<CorrectionRule[]>([]);
+  // 「只看自动收集的」筛选。自动收集能被信任的前提就是用户随时能把它们单独挑出来
+  // 一眼看完并批量删掉 —— 混在手动规则里等于看不见。
+  const [onlyLearnedRules, setOnlyLearnedRules] = useState(false);
   const [rulePatternDraft, setRulePatternDraft] = useState('');
   const [ruleReplacementDraft, setRuleReplacementDraft] = useState('');
 
@@ -143,6 +146,48 @@ export function Vocab() {
       setError(err instanceof Error ? err.message : String(err));
     }
   };
+
+  const onRemoveAllLearnedRules = async () => {
+    const learned = correctionRules.filter(r => r.source === 'learned');
+    if (learned.length === 0) return;
+    // 逐条删而不是加一个新的批量后端命令：规则数量是几十条量级，为此多开一条 IPC
+    // 不值得，而且逐条删失败一条也不影响其余。
+    const removed: string[] = [];
+    for (const rule of learned) {
+      try {
+        await removeCorrectionRule(rule.id);
+        removed.push(rule.id);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    }
+    setCorrectionRules(prev => prev.filter(r => !removed.includes(r.id)));
+  };
+
+  // 自动收集的词条靠 note 认。分成两区显示 —— 见下面渲染处的说明。
+  const LEARNED_NOTE = '从手改中自动收集';
+  const manualEntries = entries.filter(e => e.note !== LEARNED_NOTE);
+  const learnedEntries = entries.filter(e => e.note === LEARNED_NOTE);
+
+  const onRemoveAllLearnedEntries = async () => {
+    // 逐条删而不是加一条批量后端命令：词条是几十条量级，为此多开一条 IPC 不值得，
+    // 而且逐条删失败一条也不影响其余。
+    const removed: string[] = [];
+    for (const entry of learnedEntries) {
+      try {
+        await removeVocab(entry.id);
+        removed.push(entry.id);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    }
+    setEntries(prev => prev.filter(e => !removed.includes(e.id)));
+  };
+
+  const learnedRuleCount = correctionRules.filter(r => r.source === 'learned').length;
+  const visibleCorrectionRules = onlyLearnedRules
+    ? correctionRules.filter(r => r.source === 'learned')
+    : correctionRules;
 
   const onToggleCorrectionRule = async (rule: CorrectionRule) => {
     const next = !rule.enabled;
@@ -335,11 +380,26 @@ export function Vocab() {
               />
               <Btn size="sm" variant="primary" onClick={() => void onAddCorrectionRule()} style={mobile ? { justifySelf: 'start' } : undefined}>{t('common.add')}</Btn>
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, minHeight: correctionRules.length ? undefined : 20 }}>
-              {correctionRules.length === 0 && (
+            {learnedRuleCount > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ol-ink-3)' }}>
+                  <input
+                    type="checkbox"
+                    checked={onlyLearnedRules}
+                    onChange={e => setOnlyLearnedRules(e.target.checked)}
+                  />
+                  {t('vocab.corrections.onlyLearned', { count: learnedRuleCount })}
+                </label>
+                <Btn size="sm" onClick={() => void onRemoveAllLearnedRules()}>
+                  {t('vocab.corrections.removeAllLearned')}
+                </Btn>
+              </div>
+            )}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, minHeight: visibleCorrectionRules.length ? undefined : 20 }}>
+              {visibleCorrectionRules.length === 0 && (
                 <span style={{ fontSize: 12, color: 'var(--ol-ink-4)' }}>{t('vocab.corrections.empty')}</span>
               )}
-              {correctionRules.map(rule => (
+              {visibleCorrectionRules.map(rule => (
                 <CorrectionRuleChip
                   key={rule.id}
                   rule={rule}
@@ -384,10 +444,39 @@ export function Vocab() {
                 {t('vocab.empty')}
               </div>
             )}
-            {!error && entries.map(e => (
+            {!error && manualEntries.map(e => (
               <VocabChip key={e.id} entry={e} onRemove={() => onRemove(e.id)} onToggle={() => onToggle(e)} />
             ))}
           </div>
+          {/* 自动收集的单独一区。不给每个词条挂 badge —— 混在一堆里要逐个看；
+              分区一眼就看得完，「全部删除」也自然地管着下面这一块。
+              用户随时能看清、能整块撤销，是自动收集能被信任的前提。 */}
+          {!error && learnedEntries.length > 0 && (
+            <>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  marginTop: 16,
+                  paddingTop: 12,
+                  borderTop: '0.5px solid var(--ol-line-soft)',
+                }}
+              >
+                <span style={{ fontSize: 12, color: 'var(--ol-ink-3)' }}>
+                  {t('vocab.learnedSection', { count: learnedEntries.length })}
+                </span>
+                <Btn size="sm" onClick={() => void onRemoveAllLearnedEntries()}>
+                  {t('vocab.removeAllLearned')}
+                </Btn>
+              </div>
+              <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {learnedEntries.map(e => (
+                  <VocabChip key={e.id} entry={e} onRemove={() => onRemove(e.id)} onToggle={() => onToggle(e)} />
+                ))}
+              </div>
+            </>
+          )}
         </Collapsible>
       </Card>
       <style>{`
@@ -429,6 +518,18 @@ function CorrectionRuleChip({ rule, onToggle, onRemove }: CorrectionRuleChipProp
       >
         {rule.pattern} → {rule.replacement}
       </button>
+      {rule.source === 'learned' && (
+        <span
+          title={t('vocab.corrections.learnedTip')}
+          style={{
+            padding: '1px 5px', borderRadius: 4, fontSize: 10,
+            background: 'var(--ol-blue-soft)', color: 'var(--ol-ink-3)',
+            fontFamily: 'inherit', letterSpacing: 0.2,
+          }}
+        >
+          {t('vocab.corrections.learnedBadge')}
+        </span>
+      )}
       <button
         onClick={onRemove}
         aria-label={t('vocab.corrections.removeAria')}
@@ -456,6 +557,11 @@ function VocabChip({ entry, onRemove, onToggle }: VocabChipProps) {
         // 80px 高，chip borderRadius: 999 把高度变大渲染成"超大椭圆"。alignSelf:flex-start
         // 阻止拉伸，chip 始终保持 content 高度。
         alignSelf: 'flex-start',
+        // flex item 默认按最长内容计算最小宽度，超长词条会把右侧操作按钮挤出容器。
+        // 允许 chip 收缩到容器内，文本区域再单独截断，确保删除按钮始终可见。
+        minWidth: 0,
+        maxWidth: '100%',
+        boxSizing: 'border-box',
         display: 'inline-flex', alignItems: 'center', gap: 6,
         padding: '5px 10px 5px 12px',
         borderRadius: 999,
@@ -471,7 +577,16 @@ function VocabChip({ entry, onRemove, onToggle }: VocabChipProps) {
       <button
         onClick={onToggle}
         title={enabled ? t('vocab.tipDisabled') : t('vocab.tipEnabled')}
-        style={{ background: 'transparent', border: 0, padding: 0, color: 'inherit', fontFamily: 'inherit', cursor: 'default' }}
+        style={{
+          minWidth: 0,
+          flex: '1 1 auto',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          textAlign: 'left',
+          background: 'transparent', border: 0, padding: 0,
+          color: 'inherit', fontFamily: 'inherit', cursor: 'default',
+        }}
       >
         {entry.phrase}
       </button>
@@ -480,6 +595,7 @@ function VocabChip({ entry, onRemove, onToggle }: VocabChipProps) {
           minWidth: 18, height: 18, padding: '0 5px',
           borderRadius: 999, fontSize: 10, fontWeight: 600,
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          flexShrink: 0,
           background: entry.hits > 0 && enabled ? 'var(--ol-blue)' : 'rgba(0,0,0,0.06)',
           color: entry.hits > 0 && enabled ? '#fff' : 'var(--ol-ink-4)',
           fontFamily: 'var(--ol-font-sans)',
@@ -491,7 +607,8 @@ function VocabChip({ entry, onRemove, onToggle }: VocabChipProps) {
         style={{
           width: 14, height: 14, padding: 0, border: 0, borderRadius: 999,
           background: 'transparent', color: 'var(--ol-ink-4)',
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'default',
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          flexShrink: 0, cursor: 'default',
         }}
       >
         <svg width="8" height="8" viewBox="0 0 8 8"><path d="M1 1l6 6M7 1l-6 6" stroke="currentColor" strokeWidth="1.4" /></svg>

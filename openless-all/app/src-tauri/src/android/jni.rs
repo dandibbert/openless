@@ -2,7 +2,7 @@
 
 #[cfg(target_os = "android")]
 pub mod android {
-    use jni::objects::{JClass, JObject, JString, JValue};
+    use jni::objects::{JByteArray, JClass, JObject, JString, JValue};
     use jni::JNIEnv;
     use jni::JavaVM;
 
@@ -107,6 +107,248 @@ pub mod android {
         Ok(jstring(env, value)?.into())
     }
 
+    fn with_tao_android_env<R>(
+        f: impl for<'local> FnOnce(&mut JNIEnv<'local>, &JObject<'local>) -> Result<R, String>,
+    ) -> Result<R, String> {
+        let android_context = tao::platform::android::prelude::main_android_context()
+            .ok_or_else(|| "Tao Android context not yet initialized".to_string())?;
+        let vm = unsafe {
+            JavaVM::from_raw(android_context.java_vm.cast())
+                .map_err(|error| format!("attach Android JVM: {error}"))?
+        };
+        let mut env = vm
+            .attach_current_thread()
+            .map_err(|error| format!("attach Android thread: {error}"))?;
+        let raw_context = android_context.context_jobject as jni::sys::jobject;
+        if raw_context.is_null() {
+            return Err("Tao Android context is null".to_string());
+        }
+        // SAFETY: Tao keeps this activity reference alive for the Android
+        // runtime; it is only borrowed for the duration of `f`.
+        let context = unsafe { JObject::from_raw(raw_context) };
+        f(&mut env, &context)
+    }
+
+    /// Returns the app-private files directory supplied by Android's Context.
+    pub(crate) fn app_files_dir() -> Result<String, String> {
+        // Persistence initializes before mobile_runtime::setup initializes
+        // ndk-context, so use Tao's non-panicking activity registry here.
+        with_tao_android_env(|env, context| {
+            let directory = env
+                .call_method(context, "getFilesDir", "()Ljava/io/File;", &[])
+                .and_then(|value| value.l())
+                .map_err(|error| format!("Context.getFilesDir: {error}"))?;
+            if directory.is_null() {
+                return Err("Context.getFilesDir returned null".to_string());
+            }
+            let path = env
+                .call_method(&directory, "getAbsolutePath", "()Ljava/lang/String;", &[])
+                .and_then(|value| value.l())
+                .map_err(|error| format!("File.getAbsolutePath: {error}"))?;
+            if path.is_null() {
+                return Err("Context files directory has no path".to_string());
+            }
+            let path = env
+                .get_string(&JString::from(path))
+                .map_err(|error| format!("read Context files directory: {error}"))?
+                .to_string_lossy()
+                .into_owned();
+            if path.is_empty() {
+                return Err("Context files directory is empty".to_string());
+            }
+            Ok(path)
+        })
+    }
+
+    /// Returns the app-private cache directory supplied by Android's Context.
+    pub(crate) fn app_cache_dir() -> Result<String, String> {
+        with_android_env(|env, context| {
+            let directory = env
+                .call_method(context, "getCacheDir", "()Ljava/io/File;", &[])
+                .and_then(|value| value.l())
+                .map_err(|error| format!("Context.getCacheDir: {error}"))?;
+            if directory.is_null() {
+                return Err("Context.getCacheDir returned null".to_string());
+            }
+            let path = env
+                .call_method(&directory, "getAbsolutePath", "()Ljava/lang/String;", &[])
+                .and_then(|value| value.l())
+                .map_err(|error| format!("File.getAbsolutePath: {error}"))?;
+            if path.is_null() {
+                return Err("Context cache directory has no path".to_string());
+            }
+            let path = env
+                .get_string(&JString::from(path))
+                .map_err(|error| format!("read Context cache directory: {error}"))?
+                .to_string_lossy()
+                .into_owned();
+            if path.is_empty() {
+                return Err("Context cache directory is empty".to_string());
+            }
+            Ok(path)
+        })
+    }
+
+    const CREDENTIAL_VAULT_CLASS: &str = "com.openless.app.OpenLessCredentialVault";
+    const KEYSTORE_KEY_MISSING: &str = "openless-keystore-key-missing";
+    const KEYSTORE_AUTHENTICATION_FAILED: &str = "openless-keystore-authentication-failed";
+    const KEYSTORE_TEMPORARILY_UNAVAILABLE: &str = "openless-keystore-temporarily-unavailable";
+    const KEYSTORE_MALFORMED: &str = "openless-keystore-malformed";
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum AndroidKeystoreFailure {
+        KeyMissingOrInvalidated,
+        AuthenticationFailed,
+        TemporarilyUnavailable,
+        Malformed,
+    }
+
+    fn clear_pending_exception(env: &mut JNIEnv) {
+        if env.exception_check().unwrap_or(false) {
+            let _ = env.exception_clear();
+        }
+    }
+
+    fn keystore_temporarily_unavailable<T>(env: &mut JNIEnv) -> Result<T, String> {
+        clear_pending_exception(env);
+        Err(KEYSTORE_TEMPORARILY_UNAVAILABLE.to_string())
+    }
+
+    fn credential_response(response: Vec<u8>) -> Result<Vec<u8>, String> {
+        let Some((&status, payload)) = response.split_first() else {
+            return Err(KEYSTORE_TEMPORARILY_UNAVAILABLE.to_string());
+        };
+        match status {
+            0 => Ok(payload.to_vec()),
+            1 => Err(KEYSTORE_KEY_MISSING.to_string()),
+            2 => Err(KEYSTORE_AUTHENTICATION_FAILED.to_string()),
+            3 => Err(KEYSTORE_TEMPORARILY_UNAVAILABLE.to_string()),
+            4 => Err(KEYSTORE_MALFORMED.to_string()),
+            _ => Err(KEYSTORE_TEMPORARILY_UNAVAILABLE.to_string()),
+        }
+    }
+
+    fn call_credential_vault_two_arrays(
+        method: &str,
+        first: &[u8],
+        second: &[u8],
+    ) -> Result<Vec<u8>, String> {
+        with_android_env(|env, context| {
+            let class = match load_context_class(env, context, CREDENTIAL_VAULT_CLASS) {
+                Ok(class) => class,
+                Err(_) => return keystore_temporarily_unavailable(env),
+            };
+            let first_array = match env.byte_array_from_slice(first) {
+                Ok(array) => array,
+                Err(_) => return keystore_temporarily_unavailable(env),
+            };
+            let second_array = match env.byte_array_from_slice(second) {
+                Ok(array) => array,
+                Err(_) => return keystore_temporarily_unavailable(env),
+            };
+            let first_object = JObject::from(first_array);
+            let second_object = JObject::from(second_array);
+            let value = match env.call_static_method(
+                class,
+                method,
+                "([B[B)[B",
+                &[
+                    JValue::Object(&first_object),
+                    JValue::Object(&second_object),
+                ],
+            ) {
+                Ok(value) => value,
+                Err(_) => return keystore_temporarily_unavailable(env),
+            };
+            let object = match value.l() {
+                Ok(object) => object,
+                Err(_) => return keystore_temporarily_unavailable(env),
+            };
+            if object.is_null() {
+                return Err(KEYSTORE_TEMPORARILY_UNAVAILABLE.to_string());
+            }
+            let array = JByteArray::from(object);
+            let response = match env.convert_byte_array(&array) {
+                Ok(response) => response,
+                Err(_) => return keystore_temporarily_unavailable(env),
+            };
+            credential_response(response)
+        })
+    }
+
+    fn call_credential_vault_no_args(method: &str) -> Result<Vec<u8>, String> {
+        with_android_env(|env, context| {
+            let class = match load_context_class(env, context, CREDENTIAL_VAULT_CLASS) {
+                Ok(class) => class,
+                Err(_) => return keystore_temporarily_unavailable(env),
+            };
+            let value = match env.call_static_method(class, method, "()[B", &[]) {
+                Ok(value) => value,
+                Err(_) => return keystore_temporarily_unavailable(env),
+            };
+            let object = match value.l() {
+                Ok(object) => object,
+                Err(_) => return keystore_temporarily_unavailable(env),
+            };
+            if object.is_null() {
+                return Err(KEYSTORE_TEMPORARILY_UNAVAILABLE.to_string());
+            }
+            let array = JByteArray::from(object);
+            let response = match env.convert_byte_array(&array) {
+                Ok(response) => response,
+                Err(_) => return keystore_temporarily_unavailable(env),
+            };
+            credential_response(response)
+        })
+    }
+
+    fn classify_keystore_failure(error: String) -> AndroidKeystoreFailure {
+        match error.as_str() {
+            KEYSTORE_KEY_MISSING => AndroidKeystoreFailure::KeyMissingOrInvalidated,
+            KEYSTORE_AUTHENTICATION_FAILED => AndroidKeystoreFailure::AuthenticationFailed,
+            KEYSTORE_MALFORMED => AndroidKeystoreFailure::Malformed,
+            _ => AndroidKeystoreFailure::TemporarilyUnavailable,
+        }
+    }
+
+    pub(crate) fn keystore_seal(
+        plaintext: &[u8],
+        aad: &[u8],
+    ) -> Result<Vec<u8>, AndroidKeystoreFailure> {
+        call_credential_vault_two_arrays("seal", plaintext, aad)
+            .map_err(classify_keystore_failure)
+    }
+
+    pub(crate) fn keystore_open(
+        sealed: &[u8],
+        aad: &[u8],
+    ) -> Result<Vec<u8>, AndroidKeystoreFailure> {
+        call_credential_vault_two_arrays("open", sealed, aad)
+            .map_err(classify_keystore_failure)
+    }
+
+    pub(crate) fn keystore_delete_key() -> Result<(), AndroidKeystoreFailure> {
+        call_credential_vault_no_args("deleteKey")
+            .map(|_| ())
+            .map_err(classify_keystore_failure)
+    }
+
+    pub(crate) fn keystore_migration_complete() -> Result<bool, AndroidKeystoreFailure> {
+        let payload = call_credential_vault_no_args("migrationComplete")
+            .map_err(classify_keystore_failure)?;
+        match payload.as_slice() {
+            [0] => Ok(false),
+            [1] => Ok(true),
+            _ => Err(AndroidKeystoreFailure::Malformed),
+        }
+    }
+
+    pub(crate) fn keystore_mark_migration_complete() -> Result<(), AndroidKeystoreFailure> {
+        call_credential_vault_no_args("markMigrationComplete")
+            .map(|_| ())
+            .map_err(classify_keystore_failure)
+    }
+
     pub fn start_activity_class(
         env: &mut JNIEnv,
         context: &JObject,
@@ -204,18 +446,21 @@ pub mod android {
         Ok(())
     }
 
-    pub fn can_draw_overlays(env: &mut JNIEnv, context: &JObject) -> Result<bool, String> {
+    pub fn can_draw_overlays<'local>(
+        env: &mut JNIEnv<'local>,
+        context: &JObject<'local>,
+    ) -> Result<bool, String> {
         if android_sdk_int(env)? < 23 {
             return Ok(true);
         }
-        env.call_static_method(
-            "android/provider/Settings",
-            "canDrawOverlays",
+        call_static_bool_with_context_class(
+            env,
+            context,
+            "com.openless.app.OpenLessPermissionBridge",
+            "canDrawOverlaysSafely",
             "(Landroid/content/Context;)Z",
             &[JValue::Object(context)],
         )
-        .and_then(|value| value.z())
-        .map_err(|error| format!("Settings.canDrawOverlays: {error}"))
     }
 
     pub fn check_self_permission(
@@ -455,13 +700,24 @@ pub mod android {
         env: &mut JNIEnv<'local>,
         context: &JObject<'local>,
     ) -> Result<bool, String> {
-        call_static_bool_with_context_class(
+        Ok(accessibility_paste_result(env, context, "")? == "SUCCESS")
+    }
+
+    pub fn accessibility_paste_result<'local>(
+        env: &mut JNIEnv<'local>,
+        context: &JObject<'local>,
+        text: &str,
+    ) -> Result<String, String> {
+        let text_obj = env
+            .new_string(text)
+            .map_err(|error| format!("create paste text jstring: {error}"))?;
+        call_static_string_with_context_class(
             env,
             context,
             "com.openless.app.OpenLessAccessibilityService",
-            "pasteToFocusedField",
-            "()Z",
-            &[],
+            "pasteToFocusedFieldResult",
+            "(Ljava/lang/String;)Ljava/lang/String;",
+            &[JValue::Object(&text_obj)],
         )
     }
 
@@ -496,9 +752,6 @@ pub mod android {
     }
 
     const ACCESSIBILITY_SERVICE_CLASS: &str = "com.openless.app.OpenLessAccessibilityService";
-    const ACCESSIBILITY_PREFS_NAME: &str = "openless_accessibility";
-    const ACCESSIBILITY_HEARTBEAT_KEY: &str = "last_heartbeat";
-    const ACCESSIBILITY_HEARTBEAT_STALE_MS: i64 = 15_000;
 
     fn content_resolver<'local>(
         env: &mut JNIEnv<'local>,
@@ -592,7 +845,10 @@ pub mod android {
         let services = settings_secure_get_string(env, context, "enabled_accessibility_services")?
             .unwrap_or_default();
         let component_id = accessibility_service_component_id(env, context)?;
-        Ok(services.contains(&component_id))
+        Ok(crate::android::accessibility::enabled_services_contain(
+            &services,
+            &component_id,
+        ))
     }
 
     pub fn accessibility_operational<'local>(
@@ -602,39 +858,14 @@ pub mod android {
         if !accessibility_enabled(env, context)? {
             return Ok(false);
         }
-        let prefs_name = jobject_str(env, ACCESSIBILITY_PREFS_NAME)?;
-        let prefs = env
-            .call_method(
-                context,
-                "getSharedPreferences",
-                "(Ljava/lang/String;I)Landroid/content/SharedPreferences;",
-                &[JValue::Object(&prefs_name), JValue::Int(0)],
-            )
-            .and_then(|value| value.l())
-            .map_err(|error| format!("Context.getSharedPreferences: {error}"))?;
-        let heartbeat_key = jobject_str(env, ACCESSIBILITY_HEARTBEAT_KEY)?;
-        let last_heartbeat = env
-            .call_method(
-                &prefs,
-                "getLong",
-                "(Ljava/lang/String;J)J",
-                &[JValue::Object(&heartbeat_key), JValue::Long(0)],
-            )
-            .and_then(|value| value.j())
-            .map_err(|error| format!("SharedPreferences.getLong: {error}"))?;
-        if last_heartbeat <= 0 {
-            return Ok(false);
-        }
-        let now = env
-            .call_static_method(
-                "java/lang/System",
-                "currentTimeMillis",
-                "()J",
-                &[],
-            )
-            .and_then(|value| value.j())
-            .map_err(|error| format!("System.currentTimeMillis: {error}"))?;
-        Ok(now.saturating_sub(last_heartbeat) <= ACCESSIBILITY_HEARTBEAT_STALE_MS)
+        call_static_bool_with_context_class(
+            env,
+            context,
+            "com.openless.app.OpenLessAccessibilityService",
+            "pingAccessibilityProcess",
+            "(Landroid/content/Context;)Z",
+            &[JValue::Object(context)],
+        )
     }
 
     pub fn launch_accessibility_settings(
@@ -643,6 +874,98 @@ pub mod android {
     ) -> Result<(), String> {
         let action_obj = jobject_str(env, "android.settings.ACCESSIBILITY_SETTINGS")?;
         start_settings_intent(env, context, &action_obj, None)
+    }
+
+    pub fn shizuku_get_status_json<'local>(
+        env: &mut JNIEnv<'local>,
+        context: &JObject<'local>,
+    ) -> Result<String, String> {
+        call_static_string_with_context_class(
+            env,
+            context,
+            "com.openless.app.OpenLessShizukuBridge",
+            "getStatusJson",
+            "(Landroid/content/Context;)Ljava/lang/String;",
+            &[JValue::Object(context)],
+        )
+    }
+
+    pub fn shizuku_request_permission<'local>(
+        env: &mut JNIEnv<'local>,
+        context: &JObject<'local>,
+    ) -> Result<bool, String> {
+        call_static_bool_with_context_class(
+            env,
+            context,
+            "com.openless.app.OpenLessShizukuBridge",
+            "requestPermission",
+            "(Landroid/content/Context;)Z",
+            &[JValue::Object(context)],
+        )
+    }
+
+    pub fn shizuku_open_app<'local>(
+        env: &mut JNIEnv<'local>,
+        context: &JObject<'local>,
+    ) -> Result<bool, String> {
+        call_static_bool_with_context_class(
+            env,
+            context,
+            "com.openless.app.OpenLessShizukuBridge",
+            "openShizukuApp",
+            "(Landroid/content/Context;)Z",
+            &[JValue::Object(context)],
+        )
+    }
+
+    pub fn shizuku_recover_accessibility_json<'local>(
+        env: &mut JNIEnv<'local>,
+        context: &JObject<'local>,
+        confirmed: bool,
+    ) -> Result<String, String> {
+        call_static_string_with_context_class(
+            env,
+            context,
+            "com.openless.app.OpenLessShizukuBridge",
+            "recoverAccessibilityJson",
+            "(Landroid/content/Context;Z)Ljava/lang/String;",
+            &[JValue::Object(context), JValue::Bool(confirmed as u8)],
+        )
+    }
+
+    pub fn shizuku_inject_paste_key<'local>(
+        env: &mut JNIEnv<'local>,
+        context: &JObject<'local>,
+    ) -> Result<bool, String> {
+        call_static_bool_with_context_class(
+            env,
+            context,
+            "com.openless.app.OpenLessShizukuBridge",
+            "injectPasteKey",
+            "(Landroid/content/Context;)Z",
+            &[JValue::Object(context)],
+        )
+    }
+
+    fn call_static_string_with_context_class<'local>(
+        env: &mut JNIEnv<'local>,
+        context: &JObject<'local>,
+        class_name: &str,
+        method: &str,
+        sig: &str,
+        args: &[JValue],
+    ) -> Result<String, String> {
+        let class = load_context_class(env, context, class_name)?;
+        let value = env
+            .call_static_method(class, method, sig, args)
+            .and_then(|value| value.l())
+            .map_err(|error| format!("call {class_name}.{method}: {error}"))?;
+        if value.is_null() {
+            return Err(format!("{class_name}.{method} returned null"));
+        }
+        env.get_string(&JString::from(value))
+            .map_err(|error| format!("read {class_name}.{method} result: {error}"))
+            .map(|text| text.to_string_lossy().into_owned())
     }
 
     fn start_settings_intent(
@@ -711,5 +1034,67 @@ pub mod android {
             "(Landroid/content/Context;Ljava/lang/String;)Z",
             &[JValue::Object(context), JValue::Object(path_obj)],
         )
+    }
+
+    /// Read at most `max_bytes` from a SAF `content://` URI via Kotlin ContentResolver.
+    pub fn read_content_uri(uri: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
+        let max_bytes = i32::try_from(max_bytes)
+            .map_err(|_| "content URI byte limit exceeds Android integer range".to_string())?;
+        with_android_env(|env, context| {
+            let class =
+                load_context_class(env, context, "com.openless.app.OpenLessContentReader")?;
+            let uri_obj = jobject_str(env, uri)?;
+            let value = env
+                .call_static_method(
+                    class,
+                    "readBytes",
+                    "(Landroid/content/Context;Ljava/lang/String;I)[B",
+                    &[
+                        JValue::Object(context),
+                        JValue::Object(&uri_obj),
+                        JValue::Int(max_bytes),
+                    ],
+                )
+                .and_then(|value| value.l())
+                .map_err(|error| format!("call OpenLessContentReader.readBytes: {error}"))?;
+            if value.is_null() {
+                return Err("read selected Android document failed".to_string());
+            }
+            let bytes = JByteArray::from(value);
+            env.convert_byte_array(&bytes)
+                .map_err(|error| format!("copy selected Android document bytes: {error}"))
+        })
+    }
+
+    /// Write `bytes` to a SAF `content://` URI via Kotlin ContentResolver.
+    pub fn write_content_uri(uri: &str, bytes: &[u8]) -> Result<(), String> {
+        with_android_env(|env, context| {
+            let class = load_context_class(env, context, "com.openless.app.OpenLessContentWriter")?;
+            let uri_obj = jobject_str(env, uri)?;
+            let bytes_array = env
+                .byte_array_from_slice(bytes)
+                .map_err(|error| format!("create byte array for content URI write: {error}"))?;
+            let bytes_obj = JObject::from(bytes_array);
+            let ok = env
+                .call_static_method(
+                    class,
+                    "writeBytes",
+                    "(Landroid/content/Context;Ljava/lang/String;[B)Z",
+                    &[
+                        JValue::Object(context),
+                        JValue::Object(&uri_obj),
+                        JValue::Object(&bytes_obj),
+                    ],
+                )
+                .and_then(|value| value.z())
+                .map_err(|error| {
+                    format!("call OpenLessContentWriter.writeBytes: {error}")
+                })?;
+            if ok {
+                Ok(())
+            } else {
+                Err(format!("写入 content URI 失败：{uri}"))
+            }
+        })
     }
 }

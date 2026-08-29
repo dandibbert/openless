@@ -23,7 +23,7 @@ pub fn apply_correction_rules(text: &str, rules: &[CorrectionRule]) -> String {
     current
 }
 
-fn apply_rule(text: &str, pattern: &str, replacement: &str) -> String {
+pub(crate) fn apply_rule(text: &str, pattern: &str, replacement: &str) -> String {
     let token_count = pattern.matches(NUM_TOKEN).count();
     if token_count == 0 {
         if replacement.contains(NUM_TOKEN) {
@@ -148,6 +148,7 @@ mod tests {
             replacement: replacement.into(),
             enabled: true,
             created_at: String::new(),
+            source: crate::types::RuleSource::Manual,
         }
     }
 

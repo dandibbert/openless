@@ -1,7 +1,7 @@
 // 权限/连通性面板：麦克风 / 辅助功能 / 全局热键 / Windows IME / 网络。
 // 内含三个状态 Pill + 适配器名称翻译辅助函数。
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AndroidPermissionsPanel } from '@android/components/AndroidPermissionsPanel';
 import { Icon } from '../../components/Icon';
@@ -19,6 +19,7 @@ import {
 import type { NetworkCheckResult } from '../../lib/ipc';
 import { emitSaved } from '../../lib/savedEvent';
 import { getPlatformCapabilities } from '../../lib/platform';
+import { useLayoutStack, useConservativeLayout } from '../../lib/useMobileLayout';
 import { checkAndroidMicrophoneAccess, requestAndroidMicrophoneAccess } from '@android/lib/androidMicrophonePermission';
 import type {
   HotkeyStatus,
@@ -41,6 +42,17 @@ export function PermissionsSection() {
   const [network, setNetwork] = useState<NetworkCheckResult | null>(null);
   const [platformCaps, setPlatformCaps] = useState<PlatformCapabilities | null>(null);
   const { capability } = useHotkeySettings();
+  const baseLayoutStack = useLayoutStack();
+  const conservative = useConservativeLayout();
+  const stackLayout = baseLayoutStack || conservative;
+  const permissionActionsStyle: CSSProperties = {
+    display: 'flex',
+    flexDirection: conservative ? 'column' : 'row',
+    alignItems: conservative ? 'flex-start' : 'center',
+    justifyContent: stackLayout ? 'flex-start' : 'flex-end',
+    width: '100%', flexWrap: conservative ? 'nowrap' : 'wrap', minWidth: 0, gap: 8,
+  };
+
 
   useEffect(() => {
     void getPlatformCapabilities().then(setPlatformCaps);
@@ -152,9 +164,13 @@ export function PermissionsSection() {
         )}
       </div>
       <SettingRow label={t('settings.permissions.micLabel')}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'flex-end', width: '100%', flexWrap: 'wrap', minWidth: 0 }}>
+        <div style={permissionActionsStyle}>
           <PermissionPill status={microphone} />
-          {microphone !== 'granted' && microphone !== 'notApplicable' && microphone !== 'loading' && (
+          {microphone === 'noDevice' ? (
+            <Btn variant="ghost" size="sm" onClick={refreshPermissions}>
+              {t('common.retry')}
+            </Btn>
+          ) : microphone !== 'granted' && microphone !== 'notApplicable' && microphone !== 'loading' && (
             <Btn variant="ghost" size="sm" onClick={reRequestMicrophone}>
               {microphone === 'denied' || microphone === 'restricted' ? t('settings.permissions.openSystem') : t('settings.permissions.grant')}
             </Btn>
@@ -163,7 +179,7 @@ export function PermissionsSection() {
       </SettingRow>
       {capability?.requiresAccessibilityPermission && platformCaps?.platform !== 'android' && (
         <SettingRow label={t('settings.permissions.accLabel')}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'flex-end', width: '100%', flexWrap: 'wrap', minWidth: 0 }}>
+          <div style={permissionActionsStyle}>
             <PermissionPill status={accessibility} />
             {accessibility !== 'granted' && accessibility !== 'notApplicable' && accessibility !== 'loading' && (
               <Btn variant="ghost" size="sm" onClick={reRequestAccessibility}>
@@ -185,7 +201,7 @@ export function PermissionsSection() {
       )}
       {platformCaps?.supportsDesktopHotkey === true && (
       <SettingRow label={t('settings.permissions.hotkeyLabel')}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', minWidth: 0, justifyContent: 'flex-end', width: '100%', flexWrap: 'wrap' }}>
+        <div style={permissionActionsStyle}>
           {hotkey?.message && (
             <span style={{
               fontSize: 11.5, color: 'var(--ol-ink-4)',
@@ -204,7 +220,7 @@ export function PermissionsSection() {
       )}
       {windowsIme?.state !== 'notWindows' && platformCaps?.platform !== 'android' && (
         <SettingRow label={t('settings.permissions.windowsImeLabel')}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', minWidth: 0, justifyContent: 'flex-end', width: '100%', flexWrap: 'wrap' }}>
+          <div style={permissionActionsStyle}>
             {windowsIme && (
               <span style={{
                 fontSize: 11.5, color: 'var(--ol-ink-4)',
@@ -219,7 +235,7 @@ export function PermissionsSection() {
         </SettingRow>
       )}
       <SettingRow label={t('settings.permissions.networkLabel')}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'flex-end', width: '100%', flexWrap: 'wrap', minWidth: 0 }}>
+        <div style={permissionActionsStyle}>
           {network && network.latencyMs != null && (
             <span style={{ fontSize: 11, color: 'var(--ol-ink-4)' }}>
               {network.latencyMs}ms
@@ -247,6 +263,9 @@ function PermissionPill({ status }: { status: PermissionStatus | 'loading' }) {
   }
   if (status === 'notApplicable') {
     return <Pill tone="default">{t('settings.permissions.notApplicable')}</Pill>;
+  }
+  if (status === 'noDevice') {
+    return <Pill tone="outline">{t('settings.permissions.micNoDevice')}</Pill>;
   }
   if (status === 'denied' || status === 'restricted') {
     return <Pill tone="outline">{t('settings.permissions.denied')}</Pill>;

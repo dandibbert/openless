@@ -4,7 +4,7 @@ version = "1.4.0-beta"
 description = "OpenLess — local voice input that types where your cursor is"
 authors = ["OpenLess"]
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.88"
 
 [lib]
 name = "openless_lib"
@@ -23,12 +23,16 @@ cc = "1.1"
 tauri = { version = "~2.11", features = ["macos-private-api"] }
 # 锁 >=2.3.5 修复 GHSA-c9pr-q8gx-3mgp：tauri-plugin-shell `open` 端点作用域校验绕过（CRITICAL，issue #668）。
 tauri-plugin-shell = "2.3.5"
-tauri-plugin-dialog = "2"
+tauri-plugin-dialog = "2.7.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # OpenRouter ASR 把音频以标准 base64（带 padding）放进 JSON body（issue #582）。
 base64 = "0.22"
 sha2 = "0.10"
+# 讯飞 RTASR/IFASR 签名：signa = Base64(HmacSHA1(MD5(appid + ts), apiKey))。
+md-5 = "0.10"
+# HmacSHA1 的摘要实现（signa 签名用）；已在依赖树（传递依赖），提升为直接依赖零成本。
+sha1 = "0.10"
 # issue #609 F-03：history.json 完整性校验（HMAC-SHA256），密钥存系统凭据库。
 hmac = "0.12"
 # issue #609 H-02：HMAC 比较走常量时间，避免计时侧信道。已在依赖树（sha2/hmac 传递），
@@ -52,12 +56,16 @@ parking_lot = "0.12"
 once_cell = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+regex = "1"
 bytes = "1"
 url = "2"
 raw-window-handle = "0.6"
 ferrous-opencc = "0.4"
 # Audio capture — shared across desktop and mobile.
 cpal = "0.15"
+
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+tauri-plugin-fs = "2.5.1"
 
 # Desktop-only plugins, hotkey/insertion helpers, and tray-icon (not built for mobile).
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
@@ -67,7 +75,7 @@ tauri-plugin-updater = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 global-hotkey = "0.6"
-enigo = "0.2"
+enigo = "0.3"
 arboard = { version = "3", features = ["wayland-data-control"] }
 rcgen = "^0.13"
 local-ip-address = "^0.6"
@@ -88,8 +96,14 @@ version = "3.6.3"
 default-features = false
 features = ["windows-native"]
 
+[target.'cfg(unix)'.dependencies]
+# PIN persistence uses O_NOFOLLOW/O_NONBLOCK/O_CLOEXEC; macOS qwen-asr also
+# uses libc::free for strings allocated by the C runtime.
+libc = "0.2"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 dbus = "0.9"
+gtk = "0.18"
 [target.'cfg(all(unix, not(target_os = "macos"), not(target_os = "android")))'.dependencies.keyring]
 version = "3.6.3"
 default-features = false
@@ -104,6 +118,8 @@ minisign-verify = "0.2"
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.5"
 core-foundation = "0.10"
+tokenizers = "0.21"
+whisper-rs = { version = "0.14", features = ["metal"] }
 core-graphics = "0.24"
 # issue #470：托盘麦克风设备变更改用 CoreAudio AudioObjectAddPropertyListener 原生通知
 # （替代 10s 轮询，空闲零唤醒）。符号本就在依赖树（cpal → coreaudio-sys 0.2），提升为
@@ -112,15 +128,16 @@ coreaudio-sys = "0.2"
 objc2 = { version = "0.5", features = ["exception"] }
 objc2-foundation = "0.2"
 objc2-app-kit = "0.2"
-# qwen-asr 用 malloc 分配返回字符串，必须用 C `free()` 释放。
-libc = "0.2"
-# 把胶囊窗口转成「非激活 NSPanel」，使其能叠在别的 app 的全屏 Space 之上。
-# 普通 NSWindow 即便设了 collectionBehavior 也做不到（tauri#9556 / #11488）—— 必须是
-# NSPanel。该插件做窗口 NSWindow→NSPanel subclass 转换；仅 macOS。
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2" }
 
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+# 注意：path 依赖的 manifest 会被 Cargo 解析器跨所有 target 读取（与 cfg gating
+# 无关），所以**所有平台**源码构建都必须先 `git submodule update --init --recursive`，
+# 否则 cargo check 会在解析阶段硬失败。CI 里非 macOS 任务依赖
+# scripts/ci-disable-macos-qwen3.mjs 删掉本行来规避。
+qwen3-asr-rs = { path = "vendor/qwen3-asr-rs", default-features = false, features = ["mlx"] }
 [target.'cfg(target_os = "windows")'.dependencies]
-foundry-local-sdk = { version = "1.1.0", features = ["winml"] }
+foundry-local-sdk = { version = "=1.2.1", features = ["winml"] }
 raw-window-handle = "0.6"
 sherpa-onnx = { version = "1.13.2", default-features = false, features = ["static"] }
 windows = { version = "0.58", features = [
@@ -130,6 +147,7 @@ windows = { version = "0.58", features = [
   "Win32_Graphics_Gdi",
   "Win32_Media_Audio",
   "Win32_Media_Audio_Endpoints",
+  "Win32_Storage_FileSystem",
   "Win32_System_Com",
   "Win32_System_Ole",
   "Win32_System_Registry",
@@ -160,3 +178,9 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# issue #801: wayland-scanner 0.31.10 still pins vulnerable quick-xml 0.39.
+# This local copy backports upstream security commit d07c4f91f28b without
+# pulling the breaking, unreleased wayland-rs master branch.
+[patch.crates-io]
+wayland-scanner = { path = "vendor/wayland-scanner" }

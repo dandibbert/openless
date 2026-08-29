@@ -5,12 +5,12 @@
   "identifier": "com.openless.app",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run check:macos-metal-toolchain && npm run build",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
     "macOSPrivateApi": true,
     "windows": [
       {
@@ -56,6 +56,7 @@
         "font-src": "'self' https://fonts.gstatic.com",
         "img-src": "'self' asset: http://asset.localhost blob: data: https://github.com https://avatars.githubusercontent.com",
         "connect-src": "'self' ipc: http://ipc.localhost http://localhost:1420 ws://localhost:1420",
+        "media-src": "'self' data: asset: http://asset.localhost blob:",
         "object-src": "'none'",
         "base-uri": "'none'",
         "form-action": "'none'",
@@ -74,7 +75,7 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "12.0",
+      "minimumSystemVersion": "14.0",
       "infoPlist": "Info.plist",
       "entitlements": "Entitlements.plist"
     },
@@ -101,8 +102,8 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFERUFBODAzNTY0QzMyM0YKUldRL01reFdBNmpxSGE1K0JadlpONXNWTzhJcGZCRGxjUVdIWExNNFJpeUNsSGZwazdlQThhemkK",
       "endpoints": [
-        "https://github.com/appergb/openless/releases/latest/download/latest-{{target}}-{{arch}}.json",
-        "https://fastgit.cc/https://github.com/appergb/openless/releases/latest/download/latest-{{target}}-{{arch}}-mirror.json"
+        "https://github.com/Open-Less/openless/releases/latest/download/latest-{{target}}-{{arch}}.json",
+        "https://fastgit.cc/https://github.com/Open-Less/openless/releases/latest/download/latest-{{target}}-{{arch}}-mirror.json"
       ]
     }
   }

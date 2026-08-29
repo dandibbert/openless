@@ -21,20 +21,8 @@ pub fn set_qa_hotkey(
         }
     }
     let mut prefs = coord.prefs().get();
-    if let Some(binding) = binding.as_ref() {
-        reject_dictation_qa_hotkey_overlap(&prefs.dictation_hotkey, binding)?;
-        reject_qa_translation_hotkey_overlap(binding, &prefs.translation_hotkey)?;
-        if let Some(switch_style) = prefs.switch_style_hotkey.as_ref() {
-            reject_qa_switch_style_hotkey_overlap(binding, switch_style)?;
-        }
-        if let Some(open_app) = prefs.open_app_hotkey.as_ref() {
-            reject_qa_open_app_hotkey_overlap(binding, open_app)?;
-        }
-        if let Some(less_computer) = prefs.coding_agent_voice_hotkey.as_ref() {
-            reject_qa_less_computer_hotkey_overlap(binding, less_computer)?;
-        }
-    }
     prefs.qa_hotkey = binding;
+    reject_hotkey_collisions(&prefs)?;
     coord.prefs().set(prefs).map_err(|e| e.to_string())?;
     coord.update_qa_hotkey_binding();
     Ok(())
@@ -57,6 +45,12 @@ pub async fn qa_toggle_recording(coord: CoordinatorState<'_>) -> Result<(), Stri
 #[tauri::command]
 pub async fn qa_submit_text(coord: CoordinatorState<'_>, text: String) -> Result<(), String> {
     coord.qa_submit_text(text).await
+}
+
+/// 划词提问面板「编辑指令」复选框。
+#[tauri::command]
+pub fn qa_set_edit_instruction_mode(coord: CoordinatorState<'_>, enabled: bool) {
+    coord.qa_set_edit_instruction_mode(enabled);
 }
 
 /// 用户点 ✕ / 按 Esc 关 Less Computer 浮窗。
@@ -125,6 +119,19 @@ pub fn chat_panel_focus_keyboard(window: Window) -> Result<(), String> {
 #[tauri::command]
 pub fn less_computer_submit_text(coord: CoordinatorState<'_>, text: String) {
     coord.less_computer_submit_text(text);
+}
+
+/// 主设置页的文字测试入口。浮窗自身无需也不允许反向调用这个命令。
+#[tauri::command]
+pub fn less_computer_window_open(
+    window: Window,
+    coord: CoordinatorState<'_>,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Less Computer can only be opened from the main window".to_string());
+    }
+    coord.less_computer_window_open();
+    Ok(())
 }
 
 /// 浮窗 mount 时拉取当前会话的事件缓冲（seq 升序）。

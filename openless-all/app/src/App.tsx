@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Capsule } from './components/Capsule';
+import { GlobalDownloadProgress } from './components/GlobalDownloadProgress';
 import { detectOS, type OS } from './components/WindowChrome';
 import {
   checkAccessibilityPermission,
@@ -33,6 +34,8 @@ const Onboarding = lazy(() =>
   import('./components/Onboarding').then(m => ({ default: m.Onboarding })),
 );
 const QaPanel = lazy(() => import('./pages/QaPanel').then(m => ({ default: m.QaPanel })));
+const SelectionPolishPreview = lazy(() => import('./pages/SelectionPolishPreview').then(m => ({ default: m.SelectionPolishPreview })));
+const SelectionVoiceIntentPicker = lazy(() => import('./pages/SelectionVoiceIntentPicker').then(m => ({ default: m.SelectionVoiceIntentPicker })));
 // Less Computer 仅 macOS 开放（后端只在 macOS 注册热键/创建窗口）。Tauri 构建时
 // TAURI_ENV_PLATFORM 是编译期字面量：非 macOS 平台下面两个三元的 import() 分支
 // 被常量折叠 + DCE 整个裁掉，面板 chunk 不进打包产物（门控 = 不打包）。
@@ -49,6 +52,8 @@ const LessComputerGlow = LESS_COMPUTER_BUNDLED
 interface AppProps {
   isCapsule: boolean;
   isQa: boolean;
+  isSelectionPolishPreview: boolean;
+  isSelectionVoiceIntent: boolean;
   isLessComputer: boolean;
   isLessComputerGlow: boolean;
   forcedOs?: OS | null;
@@ -57,7 +62,7 @@ interface AppProps {
 type Gate = 'onboarding' | 'ready';
 const ANDROID_SETUP_WIZARD_COMPLETE_KEY = 'openless.androidSetupWizardComplete';
 
-export function App({ isCapsule, isQa, isLessComputer, isLessComputerGlow, forcedOs }: AppProps) {
+export function App({ isCapsule, isQa, isSelectionPolishPreview, isSelectionVoiceIntent, isLessComputer, isLessComputerGlow, forcedOs }: AppProps) {
   if (isCapsule) {
     return <Capsule os={forcedOs} />;
   }
@@ -67,6 +72,12 @@ export function App({ isCapsule, isQa, isLessComputer, isLessComputerGlow, force
         <QaPanel />
       </Suspense>
     );
+  }
+  if (isSelectionPolishPreview) {
+    return <Suspense fallback={null}><SelectionPolishPreview /></Suspense>;
+  }
+  if (isSelectionVoiceIntent) {
+    return <Suspense fallback={null}><SelectionVoiceIntentPicker /></Suspense>;
   }
   if (isLessComputer) {
     return LessComputerPanel ? (
@@ -241,7 +252,9 @@ export function App({ isCapsule, isQa, isLessComputer, isLessComputerGlow, force
       ]);
       if (cancelled) return;
       const aOk = a === 'granted' || a === 'notApplicable';
-      const mOk = m === 'granted' || m === 'notApplicable';
+      // noDevice（当前没有麦克风）不是权限问题：不卡 onboarding，
+      // 让用户进应用后在权限页看到“未检测到麦克风”的明确提示。见 issue #779。
+      const mOk = m === 'granted' || m === 'notApplicable' || m === 'noDevice';
       setGate(aOk && mOk ? 'ready' : 'onboarding');
     })().catch(error => {
       console.warn('[startup] permission gate failed', error);
@@ -291,6 +304,8 @@ export function App({ isCapsule, isQa, isLessComputer, isLessComputerGlow, force
   return (
     <Suspense fallback={null}>
       <HotkeySettingsProvider>
+        {/* 全局下载进度浮层：主窗口所有页面常驻（自身监听事件，与页面解耦）。 */}
+        <GlobalDownloadProgress />
         {platformCaps?.platform === 'android' && (
           <div style={{ display: mobileQaOpen ? 'block' : 'none', height: '100%' }}>
             <QaPanel
