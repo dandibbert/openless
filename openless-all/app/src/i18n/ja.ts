@@ -1281,6 +1281,7 @@ export const ja: typeof zhCN = {
         customMessages: 'カスタム · Messages',
         custom: 'カスタム',
         asrVolcengine: 'Volcengine bigasr',
+        asrSoniox: 'Soniox リアルタイム ASR',
         asrBailian: 'Alibaba Bailian リアルタイム ASR',
         asrBailianQwen3: 'Bailian Qwen3 リアルタイム ASR',
         asrBailianFunAsrFlash: 'Bailian Fun-ASR-Flash（録音ファイル）',
