@@ -1434,6 +1434,39 @@ mod tests {
     }
 
     #[test]
+    fn soniox_descriptor_routes_to_shared_realtime_provider() {
+        let descriptor = provider_descriptor(ProviderKind::Asr, SONIOX_PROVIDER_ID).unwrap();
+        assert_eq!(descriptor.label_key, "asrSoniox");
+        assert_eq!(
+            descriptor.default_endpoint.as_deref(),
+            Some(crate::asr::soniox::DEFAULT_ENDPOINT)
+        );
+        assert_eq!(
+            descriptor.default_model.as_deref(),
+            Some(crate::asr::soniox::DEFAULT_MODEL)
+        );
+        assert_eq!(descriptor.auth_requirement, AuthRequirement::ApiKey);
+        assert_eq!(descriptor.validation_probe, ValidationProbe::AsrSilence);
+        assert_eq!(
+            resolve_effective_asr_provider(SONIOX_PROVIDER_ID, crate::asr::soniox::DEFAULT_MODEL)
+                .unwrap(),
+            SONIOX_PROVIDER_ID
+        );
+        assert_eq!(
+            active_asr_provider_kind(SONIOX_PROVIDER_ID),
+            ActiveAsrProviderKind::Soniox
+        );
+    }
+
+    #[test]
+    fn soniox_configured_state_requires_api_key_but_uses_provider_defaults() {
+        let mut configuration = CredentialConfiguration::default();
+        assert!(!asr_configured(SONIOX_PROVIDER_ID, &configuration, None));
+        configuration.asr_api_key = true;
+        assert!(asr_configured(SONIOX_PROVIDER_ID, &configuration, None));
+    }
+
+    #[test]
     fn secret_like_volc_resource_ids_are_not_attributed() {
         assert_eq!(
             volc_resource_history_label("volc.seedasr.sauc.duration").as_deref(),
