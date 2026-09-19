@@ -15,6 +15,7 @@ pub const OPENAI_COMPATIBLE_ASR_PROVIDER_ID: &str = "openai-compatible";
 pub const ZENMUX_ASR_PROVIDER_ID: &str = "zenmux";
 
 const BAILIAN_PROVIDER_ID: &str = "bailian";
+const SONIOX_PROVIDER_ID: &str = "soniox";
 const QWEN3_REALTIME_PROVIDER_ID: &str = "bailian-qwen3-realtime";
 const STEPFUN_REALTIME_PROVIDER_ID: &str = "stepfun-realtime";
 const MIMO_PROVIDER_ID: &str = "xiaomi-mimo-asr";
@@ -25,6 +26,7 @@ const TENCENT_CLOUD_PROVIDER_ID: &str = "tencent-cloud";
 
 const ASR_PROVIDER_TYPES: &[(&str, &str)] = &[
     ("volcengine", "asrVolcengine"),
+    (SONIOX_PROVIDER_ID, "asrSoniox"),
     ("elevenlabs", "asrElevenLabs"),
     ("bailian", "asrBailian"),
     ("bailian-qwen3-realtime", "asrBailianQwen3"),
@@ -373,6 +375,7 @@ const DASHSCOPE_ASYNC_DEFAULT_ENDPOINT: &str =
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveAsrProviderKind {
     Bailian,
+    Soniox,
     Qwen3Realtime,
     StepfunRealtime,
     Mimo,
@@ -548,6 +551,7 @@ pub fn equivalent_endpoint(left: &str, right: &str) -> bool {
 
 pub fn default_asr_endpoint(provider_type: &str) -> Option<&'static str> {
     match provider_type {
+        SONIOX_PROVIDER_ID => Some(crate::asr::soniox::DEFAULT_ENDPOINT),
         "elevenlabs" => Some("https://api.elevenlabs.io/v1"),
         "bailian" => Some(BAILIAN_DEFAULT_ENDPOINT),
         "bailian-qwen3-realtime" => Some(QWEN3_REALTIME_DEFAULT_ENDPOINT),
@@ -567,6 +571,7 @@ pub fn default_asr_endpoint(provider_type: &str) -> Option<&'static str> {
 
 pub fn default_asr_model(provider_type: &str) -> Option<&'static str> {
     match provider_type {
+        SONIOX_PROVIDER_ID => Some(crate::asr::soniox::DEFAULT_MODEL),
         "elevenlabs" => Some(crate::asr::elevenlabs::DEFAULT_MODEL),
         "bailian" => Some(crate::asr::bailian::DEFAULT_MODEL),
         "bailian-qwen3-realtime" => Some(crate::asr::qwen_realtime::DEFAULT_MODEL),
@@ -740,6 +745,7 @@ pub fn parse_extra_headers(value: &str) -> Result<HashMap<String, String>, Backe
 pub fn active_asr_provider_kind(id: &str) -> ActiveAsrProviderKind {
     match id {
         BAILIAN_PROVIDER_ID => ActiveAsrProviderKind::Bailian,
+        SONIOX_PROVIDER_ID => ActiveAsrProviderKind::Soniox,
         QWEN3_REALTIME_PROVIDER_ID => ActiveAsrProviderKind::Qwen3Realtime,
         STEPFUN_REALTIME_PROVIDER_ID => ActiveAsrProviderKind::StepfunRealtime,
         MIMO_PROVIDER_ID | crate::asr::mimo::ORCAROUTER_PROVIDER_ID => ActiveAsrProviderKind::Mimo,
