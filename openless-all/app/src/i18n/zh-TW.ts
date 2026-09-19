@@ -1234,6 +1234,7 @@ export const zhTW: typeof zhCN = {
         customMessages: '自訂 · Messages',
         custom: '自定義',
         asrVolcengine: '火山引擎 bigasr',
+        asrSoniox: 'Soniox 即時 ASR',
         asrBailian: '阿里雲百煉即時 ASR',
         asrBailianQwen3: '阿里雲百煉 Qwen3 即時 ASR',
         asrBailianFunAsrFlash: '阿里雲百煉 Fun-ASR-Flash（錄音檔）',
