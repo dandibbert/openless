@@ -15,6 +15,18 @@
     },
     {
       "authRequirement": "api_key",
+      "defaultEndpoint": "wss://stt-rt.soniox.com/transcribe-websocket",
+      "defaultModel": "stt-rt-v5",
+      "defaultRequestFormat": null,
+      "kind": "asr",
+      "labelKey": "asrSoniox",
+      "providerType": "soniox",
+      "staticModels": [],
+      "supportedRequestFormats": [],
+      "validationProbe": "asr_silence"
+    },
+    {
+      "authRequirement": "api_key",
       "defaultEndpoint": "https://api.elevenlabs.io/v1",
       "defaultModel": "scribe_v2",
       "defaultRequestFormat": null,
