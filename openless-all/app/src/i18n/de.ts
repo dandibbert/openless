@@ -1327,6 +1327,7 @@ export const de: typeof zhCN = {
         stepfun: 'StepFun',
         custom: 'Benutzerdefiniert',
         asrVolcengine: 'Volcengine bigasr',
+        asrSoniox: 'Soniox Echtzeit-ASR',
         asrTencentCloud: 'Tencent Cloud Hunyuan Echtzeit-ASR',
         asrBailian: 'Alibaba Bailian Echtzeit-ASR',
         asrBailianQwen3: 'Bailian Qwen3 Realtime ASR',
