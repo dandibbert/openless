@@ -62,11 +62,17 @@ jobs:
             fi
           done
 
-          if $is_tag; then
+          if $is_tag && $has_keystore; then
             echo "mode=release" >> "$GITHUB_OUTPUT"
             echo "label=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
             echo "signing=tag-release" >> "$GITHUB_OUTPUT"
             echo "signing_label=Tag release with release keystore" >> "$GITHUB_OUTPUT"
+          elif $is_tag; then
+            echo "mode=debug" >> "$GITHUB_OUTPUT"
+            echo "label=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "signing=debug-fallback" >> "$GITHUB_OUTPUT"
+            echo "signing_label=Unsigned debug fallback (tag release without keystore secrets)" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Unsigned debug APK::ANDROID_KEYSTORE_* secrets are not configured. Tag release will attach debug APKs; overlay install and user data preservation require the release keystore."
           elif $has_keystore; then
             echo "mode=release" >> "$GITHUB_OUTPUT"
             echo "label=dispatch-run-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
@@ -87,8 +93,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-            echo "::error::TAURI_SIGNING_PRIVATE_KEY is required for signed Android release artifacts."
-            exit 1
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not configured. Android APKs will still be published; minisign signatures and updater manifests will be skipped."
           fi
 
       - name: Check Android keystore secrets (tag release)
@@ -107,9 +112,7 @@ jobs:
             fi
           done
           if [ "${#missing[@]}" -gt 0 ]; then
-            echo "::error::Android release signing secrets are required for tag builds: ${missing[*]}"
-            echo "::error::Configure ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD in repo secrets."
-            exit 1
+            echo "::warning::Android release signing secrets are missing (${missing[*]}). Tag release will attach debug APKs instead of a signed release build."
           fi
 
       - name: Setup Java 17 (Zulu)
@@ -330,7 +333,7 @@ jobs:
           PY
 
       - name: Sign release APKs (minisign)
-        if: steps.mode.outputs.is_tag_release == 'true'
+        if: steps.mode.outputs.is_tag_release == 'true' && env.TAURI_SIGNING_PRIVATE_KEY != ''
         working-directory: openless-all/app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -344,11 +347,11 @@ jobs:
             "${{ steps.apk.outputs.x86_64_path }}"
 
       - name: Write Android updater manifests
-        if: steps.mode.outputs.is_tag_release == 'true'
+        if: steps.mode.outputs.is_tag_release == 'true' && env.TAURI_SIGNING_PRIVATE_KEY != ''
         working-directory: openless-all/app
         env:
           OPENLESS_UPDATE_APK_DIR: ${{ steps.apk.outputs.out_dir }}
-          OPENLESS_UPDATE_REPO: Open-Less/openless
+          OPENLESS_UPDATE_REPO: dandibbert/openless
           OPENLESS_UPDATE_MIRROR_BASE_URL: https://fastgit.cc/https://github.com
           OPENLESS_RELEASE_CHANNEL: ${{ env.OPENLESS_RELEASE_CHANNEL }}
           OPENLESS_RELEASE_TAG: ${{ github.ref_name }}
@@ -424,15 +427,43 @@ jobs:
 
       - name: Attach Android assets to GitHub Release
         if: steps.mode.outputs.is_tag_release == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: OpenLess ${{ github.ref_name }}
-          draft: false
-          prerelease: ${{ env.OPENLESS_RELEASE_CHANNEL == 'beta' }}
-          append_body: true
-          body_path: ${{ runner.temp }}/android-release-body.md
-          files: ${{ steps.release_assets.outputs.files }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          CHANNEL: ${{ env.OPENLESS_RELEASE_CHANNEL }}
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(printf '%s\n' "${{ steps.release_assets.outputs.files }}" | sed '/^$/d')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::No Android release files to upload"
+            exit 1
+          fi
+          # Desktop jobs create the same tag's Release. Wait for it first to avoid
+          # racing softprops/action-gh-release into an already_exists error.
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release upload "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+              if [ -f "$RUNNER_TEMP/android-release-body.md" ]; then
+                existing="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq '.body // ""')"
+                {
+                  printf '%s\n\n' "$existing"
+                  cat "$RUNNER_TEMP/android-release-body.md"
+                } > "$RUNNER_TEMP/android-release-body-merged.md"
+                gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/android-release-body-merged.md"
+              fi
+              exit 0
+            fi
+            echo "Release $TAG not visible yet (attempt $attempt); waiting for desktop publish"
+            sleep 20
+          done
+          prerelease_args=()
+          if [ "$CHANNEL" = "beta" ]; then
+            prerelease_args+=(--prerelease)
+          fi
+          gh release create "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" \
+            --title "OpenLess ${TAG}" \
+            "${prerelease_args[@]}" \
+            --notes-file "$RUNNER_TEMP/android-release-body.md"
 
       - name: Write build summary
         if: always() && steps.mode.outputs.signing != ''
