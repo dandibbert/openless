@@ -255,6 +255,7 @@ export const inputStyle: CSSProperties = {
 // 这里的顺序和键仅用于本地化回退；协议说明也应写在 Core provider_rules 附近。
 export const ASR_LABELS = [
   { id: 'volcengine', nameKey: 'asrVolcengine' },
+  { id: 'soniox', nameKey: 'asrSoniox' },
   { id: 'elevenlabs', nameKey: 'asrElevenLabs' },
   { id: 'bailian', nameKey: 'asrBailian' },
   { id: 'bailian-qwen3-realtime', nameKey: 'asrBailianQwen3' },
