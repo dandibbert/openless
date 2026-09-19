@@ -102,8 +102,8 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFERUFBODAzNTY0QzMyM0YKUldRL01reFdBNmpxSGE1K0JadlpONXNWTzhJcGZCRGxjUVdIWExNNFJpeUNsSGZwazdlQThhemkK",
       "endpoints": [
-        "https://github.com/Open-Less/openless/releases/latest/download/latest-{{target}}-{{arch}}.json",
-        "https://fastgit.cc/https://github.com/Open-Less/openless/releases/latest/download/latest-{{target}}-{{arch}}-mirror.json"
+        "https://github.com/dandibbert/openless/releases/latest/download/latest-{{target}}-{{arch}}.json",
+        "https://fastgit.cc/https://github.com/dandibbert/openless/releases/latest/download/latest-{{target}}-{{arch}}-mirror.json"
       ]
     }
   }
