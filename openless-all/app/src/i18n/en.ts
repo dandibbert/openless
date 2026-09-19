@@ -1294,6 +1294,7 @@ export const en: typeof zhCN = {
         customMessages: 'Custom · Messages',
         custom: 'Custom',
         asrVolcengine: 'Volcengine bigasr',
+        asrSoniox: 'Soniox realtime ASR',
         asrBailian: 'Alibaba Bailian realtime ASR',
         asrBailianQwen3: 'Bailian Qwen3 Realtime ASR',
         asrBailianFunAsrFlash: 'Bailian Fun-ASR-Flash (recorded file)',
