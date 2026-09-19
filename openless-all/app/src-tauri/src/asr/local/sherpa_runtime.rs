@@ -19,9 +19,11 @@ use parking_lot::Mutex;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::asr::local::sherpa::{
-    self, SherpaCatalogModel, SherpaFamily, SherpaMode, SherpaPreparePhase,
-    SherpaPrepareProgressPayload, SherpaRuntimeStatus, PROVIDER_ID,
+    SherpaPreparePhase, SherpaPrepareProgressPayload, SherpaRuntimeStatus, PROVIDER_ID,
 };
+
+const QWEN3_ASR_CHUNK_LIMIT_MS: u64 = 30_000;
+const QWEN3_ASR_MAX_NEW_TOKENS: i32 = 256;
 
 #[cfg(target_os = "windows")]
 use sherpa_onnx::{
@@ -109,38 +111,23 @@ impl SherpaOnnxRuntime {
         }
     }
 
-    /// 返回静态 catalog，并合并本地缓存状态与已下载字节数。
-    #[allow(dead_code)]
-    pub async fn catalog_snapshot(&self) -> Result<Vec<SherpaCatalogModel>> {
-        let mut catalog = sherpa::static_catalog_models();
-        for model in &mut catalog {
-            let dir = sherpa::model_dir_for_alias(&model.alias)?;
-            model.cached = sherpa::required_files_for_alias(&model.alias)
-                .map(|files| {
-                    files.iter().all(|file| {
-                        let path = dir.join(file);
-                        sherpa::required_path_is_valid(&model.alias, file, &path)
-                    })
-                })
-                .unwrap_or(false);
-            model.downloaded_bytes =
-                crate::asr::local::sherpa_download::downloaded_bytes(&model.alias);
-            model.file_size_mb = model_dir_size_mb(&dir);
-        }
-        Ok(catalog)
+    pub async fn ensure_loaded(&self, alias: &str, model_dir: &Path) -> Result<String> {
+        self.ensure_loaded_with_progress(alias, model_dir.to_path_buf(), |_| {})
+            .await
     }
 
-    pub async fn ensure_loaded(&self, alias: &str) -> Result<String> {
-        self.ensure_loaded_with_progress(alias, |_| {}).await
-    }
-
-    pub async fn ensure_loaded_with_progress<F>(&self, alias: &str, progress: F) -> Result<String>
+    pub async fn ensure_loaded_with_progress<F>(
+        &self,
+        alias: &str,
+        model_dir: PathBuf,
+        progress: F,
+    ) -> Result<String>
     where
         F: Fn(SherpaPrepareProgressPayload) + Send + Sync + 'static,
     {
         let started = Instant::now();
         let result = self
-            .ensure_loaded_with_progress_inner(alias, progress)
+            .ensure_loaded_with_progress_inner(alias, model_dir, progress)
             .await;
         let elapsed_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
         match &result {
@@ -166,7 +153,12 @@ impl SherpaOnnxRuntime {
         result
     }
 
-    async fn ensure_loaded_with_progress_inner<F>(&self, alias: &str, progress: F) -> Result<String>
+    async fn ensure_loaded_with_progress_inner<F>(
+        &self,
+        alias: &str,
+        dir: PathBuf,
+        progress: F,
+    ) -> Result<String>
     where
         F: Fn(SherpaPrepareProgressPayload) + Send + Sync + 'static,
     {
@@ -184,8 +176,6 @@ impl SherpaOnnxRuntime {
             return Ok(loaded_alias);
         }
         self.check_prepare_cancelled()?;
-        let dir = sherpa::model_dir_for_alias(alias)?;
-        ensure_required_files(alias, &dir)?;
         progress(SherpaPrepareProgressPayload::new(
             SherpaPreparePhase::Model,
             alias,
@@ -230,6 +220,7 @@ impl SherpaOnnxRuntime {
     pub async fn transcribe_pcm(
         &self,
         alias: &str,
+        model_dir: &Path,
         pcm: &[u8],
         language_hint: Option<&str>,
         audio_timeout: std::time::Duration,
@@ -237,11 +228,17 @@ impl SherpaOnnxRuntime {
         if pcm.is_empty() {
             return Ok(String::new());
         }
-        if sherpa::mode_for_alias(alias)? != SherpaMode::Offline {
+        let target = sherpa_target(alias)?;
+        if target.sherpa_execution_mode() != Some(openless_core::LocalAsrExecutionMode::Offline) {
             anyhow::bail!("sherpa-onnx model {alias} is online-only; use streaming API");
         }
         let audio_ms = pcm_duration_ms(pcm);
-        let loaded_alias = self.ensure_loaded(alias).await?;
+        let pcm_chunks = sherpa_offline_chunks(&target, pcm)
+            .into_iter()
+            .map(|chunk| chunk.to_vec())
+            .collect::<Vec<_>>();
+        let chunk_count = pcm_chunks.len();
+        let loaded_alias = self.ensure_loaded(alias, model_dir).await?;
         let loaded = self
             .state
             .lock()
@@ -252,7 +249,7 @@ impl SherpaOnnxRuntime {
         let started = Instant::now();
         let result = transcribe_loaded_model(
             loaded,
-            pcm.to_vec(),
+            pcm_chunks,
             language_hint.map(str::to_string),
             audio_timeout,
         )
@@ -261,9 +258,10 @@ impl SherpaOnnxRuntime {
         match &result {
             Ok(text) => {
                 log::info!(
-                    "[sherpa-asr] transcribe finished model={} audio_ms={} elapsed_ms={} text_chars={}",
+                    "[sherpa-asr] transcribe finished model={} audio_ms={} chunks={} elapsed_ms={} text_chars={}",
                     alias,
                     audio_ms,
+                    chunk_count,
                     elapsed_ms,
                     text.chars().count()
                 );
@@ -272,9 +270,10 @@ impl SherpaOnnxRuntime {
             Err(error) => {
                 let message = format!("{error:#}");
                 log::warn!(
-                    "[sherpa-asr] transcribe failed model={} audio_ms={} elapsed_ms={} error={}",
+                    "[sherpa-asr] transcribe failed model={} audio_ms={} chunks={} elapsed_ms={} error={}",
                     alias,
                     audio_ms,
+                    chunk_count,
                     elapsed_ms,
                     message
                 );
@@ -286,11 +285,17 @@ impl SherpaOnnxRuntime {
 
     /// 创建独立 online 解码 session。调用者负责按 Recorder PCM chunk 喂入，
     /// 并在停止录音时调用 `finish()` 刷出 final text。
-    pub async fn create_online_session(&self, alias: &str) -> Result<SherpaOnlineSession> {
-        if sherpa::mode_for_alias(alias)? != SherpaMode::Online {
+    pub async fn create_online_session(
+        &self,
+        alias: &str,
+        model_dir: &Path,
+    ) -> Result<SherpaOnlineSession> {
+        if sherpa_target(alias)?.sherpa_execution_mode()
+            != Some(openless_core::LocalAsrExecutionMode::Online)
+        {
             anyhow::bail!("sherpa-onnx model {alias} is not an online streaming model");
         }
-        let loaded_alias = self.ensure_loaded(alias).await?;
+        let loaded_alias = self.ensure_loaded(alias, model_dir).await?;
         let loaded = self
             .state
             .lock()
@@ -318,38 +323,21 @@ impl SherpaOnnxRuntime {
         Ok(())
     }
 
-    pub fn model_dir_for_alias(alias: &str) -> Result<PathBuf> {
-        sherpa::model_dir_for_alias(alias)
-    }
-
-    pub async fn delete_model(&self, alias: &str) -> Result<()> {
+    /// 自动收尾只释放仍属于本次使用的实例。代次在生命周期锁内复核，避免
+    /// 定时器等待旧推理结束期间，误清掉用户刚切换或新会话刚加载的模型。
+    pub(crate) async fn release_if_generation(
+        &self,
+        generation: &std::sync::atomic::AtomicU64,
+        expected: u64,
+    ) -> Result<bool> {
         let _lifecycle = self.lifecycle.lock().await;
-        validate_alias(alias)?;
-        {
-            let mut state = self.state.lock();
-            if state
-                .offline_loaded
-                .as_ref()
-                .map(|loaded| loaded.alias.as_str())
-                == Some(alias)
-            {
-                state.offline_loaded = None;
-            }
-            if state
-                .online_loaded
-                .as_ref()
-                .map(|loaded| loaded.alias.as_str())
-                == Some(alias)
-            {
-                state.online_loaded = None;
-            }
+        if generation.load(Ordering::Acquire) != expected {
+            return Ok(false);
         }
-        let dir = sherpa::model_dir_for_alias(alias)?;
-        if dir.exists() {
-            std::fs::remove_dir_all(&dir)
-                .with_context(|| format!("remove sherpa-onnx model dir {}", dir.display()))?;
-        }
-        Ok(())
+        let mut state = self.state.lock();
+        state.offline_loaded = None;
+        state.online_loaded = None;
+        Ok(true)
     }
 
     fn cached_loaded_alias(&self, alias: &str) -> Option<String> {
@@ -435,57 +423,25 @@ fn active_loaded_model_id(state: &RuntimeState, active_model: &str) -> Option<St
 }
 
 fn validate_alias(alias: &str) -> Result<()> {
-    if sherpa::model_alias_is_known(alias) {
-        Ok(())
-    } else {
-        anyhow::bail!("unknown sherpa-onnx model alias: {alias}");
-    }
+    sherpa_target(alias).map(|_| ())
 }
 
-fn ensure_required_files(alias: &str, dir: &Path) -> Result<()> {
-    for file in sherpa::required_files_for_alias(alias)? {
-        let path = dir.join(file);
-        if !sherpa::required_path_is_valid(alias, file, &path) {
-            anyhow::bail!(
-                "sherpa-onnx model file missing: {}. Place model files under {}",
-                file,
-                dir.display()
-            );
-        }
-    }
-    Ok(())
-}
-
-fn model_dir_size_mb(dir: &Path) -> Option<u64> {
-    if !dir.exists() {
-        return None;
-    }
-    let mut bytes = 0u64;
-    accumulate_dir_size(dir, &mut bytes);
-    Some(bytes / 1024 / 1024)
-}
-
-fn accumulate_dir_size(dir: &Path, bytes: &mut u64) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        match entry.file_type() {
-            Ok(file_type) if file_type.is_dir() => accumulate_dir_size(&path, bytes),
-            Ok(file_type) if file_type.is_file() => {
-                if let Ok(meta) = entry.metadata() {
-                    *bytes += meta.len();
-                }
-            }
-            _ => {}
-        }
-    }
+fn sherpa_target(alias: &str) -> Result<openless_core::LocalAsrTarget> {
+    openless_core::LocalAsrTarget::parse(openless_core::LocalAsrRuntime::SherpaOnnx, alias)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
 fn pcm_duration_ms(pcm: &[u8]) -> u64 {
     crate::asr::pcm::pcm_duration_ms(pcm)
+}
+
+fn sherpa_offline_chunks<'a>(
+    target: &openless_core::LocalAsrTarget,
+    pcm: &'a [u8],
+) -> Vec<&'a [u8]> {
+    let limit = (target.sherpa_family() == Some(openless_core::SherpaModelFamily::Qwen3Asr))
+        .then_some(QWEN3_ASR_CHUNK_LIMIT_MS);
+    openless_core::asr::whisper::split_pcm_by_duration(pcm, limit)
 }
 
 enum LoadedModel {
@@ -497,35 +453,43 @@ enum LoadedModel {
 async fn load_model(alias: &str, dir: &Path) -> Result<LoadedModel> {
     let alias = alias.to_string();
     let dir = dir.to_path_buf();
-    tokio::task::spawn_blocking(move || match sherpa::mode_for_alias(&alias)? {
-        SherpaMode::Offline => {
-            let recognizer = create_offline_recognizer(&alias, &dir)?;
-            Ok(LoadedModel::Offline(LoadedOfflineModel {
-                alias,
-                recognizer: Arc::new(recognizer),
-            }))
-        }
-        SherpaMode::Online => {
-            let recognizer = create_online_recognizer(&alias, &dir)?;
-            Ok(LoadedModel::Online(LoadedOnlineModel {
-                alias,
-                recognizer: Arc::new(recognizer),
-            }))
-        }
-    })
+    tokio::task::spawn_blocking(
+        move || match sherpa_target(&alias)?.sherpa_execution_mode() {
+            Some(openless_core::LocalAsrExecutionMode::Offline) => {
+                let recognizer = create_offline_recognizer(&alias, &dir)?;
+                Ok(LoadedModel::Offline(LoadedOfflineModel {
+                    alias,
+                    recognizer: Arc::new(recognizer),
+                }))
+            }
+            Some(openless_core::LocalAsrExecutionMode::Online) => {
+                let recognizer = create_online_recognizer(&alias, &dir)?;
+                Ok(LoadedModel::Online(LoadedOnlineModel {
+                    alias,
+                    recognizer: Arc::new(recognizer),
+                }))
+            }
+            None => anyhow::bail!("unknown sherpa-onnx execution mode: {alias}"),
+        },
+    )
     .await
     .map_err(|e| anyhow::anyhow!("sherpa-onnx load join failed: {e:#}"))?
 }
 
 #[cfg(not(target_os = "windows"))]
 async fn load_model(alias: &str, _dir: &Path) -> Result<LoadedModel> {
-    match sherpa::mode_for_alias(alias)? {
-        SherpaMode::Offline => Ok(LoadedModel::Offline(LoadedOfflineModel {
-            alias: alias.to_string(),
-        })),
-        SherpaMode::Online => Ok(LoadedModel::Online(LoadedOnlineModel {
-            alias: alias.to_string(),
-        })),
+    match sherpa_target(alias)?.sherpa_execution_mode() {
+        Some(openless_core::LocalAsrExecutionMode::Offline) => {
+            Ok(LoadedModel::Offline(LoadedOfflineModel {
+                alias: alias.to_string(),
+            }))
+        }
+        Some(openless_core::LocalAsrExecutionMode::Online) => {
+            Ok(LoadedModel::Online(LoadedOnlineModel {
+                alias: alias.to_string(),
+            }))
+        }
+        None => anyhow::bail!("unknown sherpa-onnx execution mode: {alias}"),
     }
 }
 
@@ -536,8 +500,8 @@ fn create_offline_recognizer(alias: &str, dir: &Path) -> Result<OfflineRecognize
         .map(|n| n.get().clamp(1, 4) as i32)
         .unwrap_or(2);
     config.model_config.provider = Some("cpu".into());
-    match model_family(alias)? {
-        SherpaFamily::SenseVoice => {
+    match sherpa_target(alias)?.sherpa_family() {
+        Some(openless_core::SherpaModelFamily::SenseVoice) => {
             config.model_config.tokens = Some(path_to_string(&dir.join("tokens.txt"))?);
             config.model_config.sense_voice = OfflineSenseVoiceModelConfig {
                 model: Some(path_to_string(&dir.join("model.int8.onnx"))?),
@@ -545,13 +509,13 @@ fn create_offline_recognizer(alias: &str, dir: &Path) -> Result<OfflineRecognize
                 use_itn: true,
             };
         }
-        SherpaFamily::Paraformer => {
+        Some(openless_core::SherpaModelFamily::Paraformer) => {
             config.model_config.tokens = Some(path_to_string(&dir.join("tokens.txt"))?);
             config.model_config.paraformer = OfflineParaformerModelConfig {
                 model: Some(path_to_string(&dir.join("model.int8.onnx"))?),
             };
         }
-        SherpaFamily::Whisper => {
+        Some(openless_core::SherpaModelFamily::Whisper) => {
             config.model_config.tokens = Some(path_to_string(&dir.join("tokens.txt"))?);
             config.model_config.whisper = OfflineWhisperModelConfig {
                 encoder: Some(path_to_string(&dir.join("encoder.int8.onnx"))?),
@@ -563,17 +527,21 @@ fn create_offline_recognizer(alias: &str, dir: &Path) -> Result<OfflineRecognize
                 enable_segment_timestamps: false,
             };
         }
-        SherpaFamily::Qwen3Asr => {
+        Some(openless_core::SherpaModelFamily::Qwen3Asr) => {
             config.model_config.qwen3_asr = OfflineQwen3ASRModelConfig {
                 conv_frontend: Some(path_to_string(&dir.join("conv_frontend.onnx"))?),
                 encoder: Some(path_to_string(&dir.join("encoder.int8.onnx"))?),
                 decoder: Some(path_to_string(&dir.join("decoder.int8.onnx"))?),
                 tokenizer: Some(path_to_string(&dir.join("tokenizer"))?),
+                max_new_tokens: QWEN3_ASR_MAX_NEW_TOKENS,
                 ..Default::default()
             };
             config.model_config.num_threads = 3;
         }
-        SherpaFamily::Zipformer => anyhow::bail!("zipformer is not supported by offline batch M2"),
+        Some(openless_core::SherpaModelFamily::Zipformer) => {
+            anyhow::bail!("zipformer is not supported by offline batch M2")
+        }
+        None => anyhow::bail!("unknown sherpa-onnx model family: {alias}"),
     }
     OfflineRecognizer::create(&config)
         .ok_or_else(|| anyhow::anyhow!("create sherpa-onnx offline recognizer failed"))
@@ -591,8 +559,8 @@ fn create_online_recognizer(alias: &str, dir: &Path) -> Result<OnlineRecognizer>
     config.rule2_min_trailing_silence = 1.2;
     config.rule3_min_utterance_length = 20.0;
     config.decoding_method = Some("greedy_search".into());
-    match model_family(alias)? {
-        SherpaFamily::Zipformer => {
+    match sherpa_target(alias)?.sherpa_family() {
+        Some(openless_core::SherpaModelFamily::Zipformer) => {
             config.model_config.tokens = Some(path_to_string(&dir.join("tokens.txt"))?);
             config.model_config.transducer.encoder = Some(path_to_string(
                 &dir.join("encoder-epoch-99-avg-1.int8.onnx"),
@@ -609,14 +577,6 @@ fn create_online_recognizer(alias: &str, dir: &Path) -> Result<OnlineRecognizer>
         .ok_or_else(|| anyhow::anyhow!("create sherpa-onnx online recognizer failed"))
 }
 
-fn model_family(alias: &str) -> Result<SherpaFamily> {
-    sherpa::MODELS
-        .iter()
-        .find(|model| model.alias == alias)
-        .map(|model| model.family)
-        .context("unknown sherpa-onnx model family")
-}
-
 #[cfg(target_os = "windows")]
 fn path_to_string(path: &Path) -> Result<String> {
     Ok(path
@@ -628,25 +588,29 @@ fn path_to_string(path: &Path) -> Result<String> {
 #[cfg(target_os = "windows")]
 async fn transcribe_loaded_model(
     loaded: LoadedOfflineModel,
-    pcm: Vec<u8>,
+    pcm_chunks: Vec<Vec<u8>>,
     language_hint: Option<String>,
     audio_timeout: std::time::Duration,
 ) -> Result<String> {
     tokio::time::timeout(audio_timeout, async move {
         tokio::task::spawn_blocking(move || {
-            let samples = pcm_s16le_to_f32(&pcm)?;
-            let stream = loaded.recognizer.create_stream();
-            if let Some(language) = language_hint.as_deref().filter(|value| !value.is_empty()) {
-                if stream.has_option("language") {
-                    stream.set_option("language", language);
+            let mut texts = Vec::with_capacity(pcm_chunks.len());
+            for pcm in pcm_chunks {
+                let samples = pcm_s16le_to_f32(&pcm)?;
+                let stream = loaded.recognizer.create_stream();
+                if let Some(language) = language_hint.as_deref().filter(|value| !value.is_empty()) {
+                    if stream.has_option("language") {
+                        stream.set_option("language", language);
+                    }
                 }
+                stream.accept_waveform(16_000, &samples);
+                loaded.recognizer.decode(&stream);
+                let result = stream
+                    .get_result()
+                    .ok_or_else(|| anyhow::anyhow!("sherpa-onnx returned no result"))?;
+                texts.push(result.text);
             }
-            stream.accept_waveform(16_000, &samples);
-            loaded.recognizer.decode(&stream);
-            let result = stream
-                .get_result()
-                .ok_or_else(|| anyhow::anyhow!("sherpa-onnx returned no result"))?;
-            Ok(result.text)
+            Ok(openless_core::asr::whisper::join_transcript_chunks(&texts))
         })
         .await
         .map_err(|e| anyhow::anyhow!("sherpa-onnx transcribe join failed: {e:#}"))?
@@ -658,7 +622,7 @@ async fn transcribe_loaded_model(
 #[cfg(not(target_os = "windows"))]
 async fn transcribe_loaded_model(
     _loaded: LoadedOfflineModel,
-    _pcm: Vec<u8>,
+    _pcm_chunks: Vec<Vec<u8>>,
     _language_hint: Option<String>,
     _audio_timeout: std::time::Duration,
 ) -> Result<String> {
@@ -844,6 +808,27 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn release_generation_is_rechecked_after_waiting_for_native_lifecycle() {
+        let runtime = SherpaOnnxRuntime::new();
+        let generation = std::sync::atomic::AtomicU64::new(1);
+        let guard = runtime.lifecycle.lock().await;
+        let release = runtime.release_if_generation(&generation, 1);
+        tokio::pin!(release);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(1), &mut release)
+                .await
+                .is_err()
+        );
+        generation.store(2, Ordering::Release);
+        drop(guard);
+        assert!(
+            !release.await.unwrap(),
+            "stale cleanup must leave the newly-owned runtime intact"
+        );
+        assert!(runtime.release_if_generation(&generation, 2).await.unwrap());
+    }
+
+    #[tokio::test]
     async fn new_runtime_reports_offline_batch_status_shape() {
         let runtime = SherpaOnnxRuntime::new();
         let status = runtime.status_snapshot("sense-voice-small-zh").await;
@@ -883,7 +868,9 @@ mod tests {
     #[tokio::test]
     async fn ensure_loaded_rejects_unknown_alias() {
         let runtime = SherpaOnnxRuntime::new();
-        let result = runtime.ensure_loaded("unknown-sherpa-model").await;
+        let result = runtime
+            .ensure_loaded("unknown-sherpa-model", Path::new("unused"))
+            .await;
         assert!(result.is_err());
         let status = runtime.status_snapshot("sense-voice-small-zh").await;
         assert!(status.last_prepare_ms.is_some());
@@ -918,38 +905,6 @@ mod tests {
         assert!(runtime.cancel_prepare_requested_for_tests());
     }
 
-    #[test]
-    fn ensure_required_files_reports_missing_model_files() {
-        let dir = std::env::temp_dir().join(format!(
-            "openless-sherpa-runtime-test-{}",
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let result = ensure_required_files("paraformer-zh", &dir);
-        std::fs::remove_dir_all(&dir).ok();
-        assert!(result.is_err());
-        let message = format!("{:#}", result.unwrap_err());
-        assert!(message.contains("model.int8.onnx"));
-        assert!(message.contains(&dir.display().to_string()));
-    }
-
-    #[test]
-    fn model_dir_size_mb_counts_nested_files() {
-        let dir = std::env::temp_dir().join(format!(
-            "openless-sherpa-runtime-size-test-{}",
-            uuid::Uuid::new_v4()
-        ));
-        let nested = dir.join("nested");
-        std::fs::create_dir_all(&nested).unwrap();
-        std::fs::write(dir.join("top.bin"), vec![1u8; 1024 * 1024]).unwrap();
-        std::fs::write(nested.join("child.bin"), vec![2u8; 1024 * 1024]).unwrap();
-
-        let size = model_dir_size_mb(&dir);
-
-        std::fs::remove_dir_all(&dir).ok();
-        assert_eq!(size, Some(2));
-    }
-
     #[tokio::test]
     async fn release_now_clears_loaded_model() {
         let runtime = SherpaOnnxRuntime::new();
@@ -959,7 +914,7 @@ mod tests {
                 alias: "sense-voice-small-zh".into(),
             });
             runtime.state.lock().online_loaded = Some(LoadedOnlineModel {
-                alias: sherpa::DEFAULT_ONLINE_MODEL_ALIAS.into(),
+                alias: "zipformer-bilingual-zh-en-streaming".into(),
             });
         }
         runtime.release_now().await.unwrap();
@@ -977,6 +932,7 @@ mod tests {
         let text = runtime
             .transcribe_pcm(
                 "sense-voice-small-zh",
+                Path::new("unused"),
                 &[],
                 Some("zh"),
                 std::time::Duration::from_secs(5),
@@ -991,7 +947,8 @@ mod tests {
         let runtime = SherpaOnnxRuntime::new();
         let result = runtime
             .transcribe_pcm(
-                sherpa::DEFAULT_ONLINE_MODEL_ALIAS,
+                "zipformer-bilingual-zh-en-streaming",
+                Path::new("unused"),
                 &[0, 0],
                 None,
                 std::time::Duration::from_secs(5),
@@ -1002,11 +959,34 @@ mod tests {
         assert!(format!("{:#}", result.unwrap_err()).contains("online-only"));
     }
 
+    #[test]
+    fn only_qwen3_offline_audio_is_split_at_thirty_seconds() {
+        let qwen = sherpa_target("qwen3-asr-0.6b-int8").unwrap();
+        let thirty_seconds = vec![0; 32_000 * 30];
+        assert_eq!(
+            sherpa_offline_chunks(&qwen, &thirty_seconds),
+            vec![thirty_seconds.as_slice()]
+        );
+
+        let pcm = vec![0; 32_000 * 65];
+        let chunks = sherpa_offline_chunks(&qwen, &pcm);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].len(), 32_000 * 30);
+        assert_eq!(chunks[1].len(), 32_000 * 30);
+        assert_eq!(chunks[2].len(), 32_000 * 5);
+
+        let sense_voice = sherpa_target("sense-voice-small-zh").unwrap();
+        assert_eq!(
+            sherpa_offline_chunks(&sense_voice, &pcm),
+            vec![pcm.as_slice()]
+        );
+    }
+
     #[tokio::test]
     async fn create_online_session_rejects_offline_model_alias() {
         let runtime = SherpaOnnxRuntime::new();
         let result = runtime
-            .create_online_session(sherpa::DEFAULT_MODEL_ALIAS)
+            .create_online_session("sense-voice-small-zh", Path::new("unused"))
             .await;
 
         assert!(result.is_err());

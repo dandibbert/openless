@@ -333,7 +333,7 @@ jobs:
           PY
 
       - name: Sign release APKs (minisign)
-        if: steps.mode.outputs.is_tag_release == 'true' && env.TAURI_SIGNING_PRIVATE_KEY != ''
+        if: steps.mode.outputs.is_tag_release == 'true' && steps.mode.outputs.mode == 'release' && env.TAURI_SIGNING_PRIVATE_KEY != ''
         working-directory: openless-all/app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -347,7 +347,7 @@ jobs:
             "${{ steps.apk.outputs.x86_64_path }}"
 
       - name: Write Android updater manifests
-        if: steps.mode.outputs.is_tag_release == 'true' && env.TAURI_SIGNING_PRIVATE_KEY != ''
+        if: steps.mode.outputs.is_tag_release == 'true' && steps.mode.outputs.mode == 'release' && env.TAURI_SIGNING_PRIVATE_KEY != ''
         working-directory: openless-all/app
         env:
           OPENLESS_UPDATE_APK_DIR: ${{ steps.apk.outputs.out_dir }}
@@ -438,9 +438,8 @@ jobs:
             echo "::error::No Android release files to upload"
             exit 1
           fi
-          # Desktop jobs also create this tag's Release. Creating it here at the
-          # same time races softprops/action-gh-release into already_exists.
-          # Wait for the existing Release, then only upload assets.
+          # Desktop jobs create the same tag's Release. Wait for it first to avoid
+          # racing softprops/action-gh-release into an already_exists error.
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
             if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
               gh release upload "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
