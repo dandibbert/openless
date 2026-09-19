@@ -1435,6 +1435,9 @@ mod tests {
 
     #[test]
     fn soniox_descriptor_routes_to_shared_realtime_provider() {
+        assert!(
+            crate::cloud_providers::SHARED_CLOUD_ASR_PROVIDER_TYPES.contains(&SONIOX_PROVIDER_ID)
+        );
         let descriptor = provider_descriptor(ProviderKind::Asr, SONIOX_PROVIDER_ID).unwrap();
         assert_eq!(descriptor.label_key, "asrSoniox");
         assert_eq!(
