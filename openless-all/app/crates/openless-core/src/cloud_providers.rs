@@ -49,6 +49,7 @@ use crate::types::SessionId;
 
 pub const SHARED_CLOUD_ASR_PROVIDER_TYPES: &[&str] = &[
     "volcengine",
+    "soniox",
     "elevenlabs",
     "bailian",
     "bailian-qwen3-realtime",
