@@ -1336,6 +1336,7 @@ export const fr: typeof zhCN = {
         stepfun: 'StepFun',
         custom: 'Personnalisé',
         asrVolcengine: 'Volcengine bigasr',
+        asrSoniox: 'ASR temps réel Soniox',
         asrTencentCloud: 'ASR temps réel Hunyuan de Tencent Cloud',
         asrBailian: 'Alibaba Bailian ASR en temps réel',
         asrBailianQwen3: 'Bailian Qwen3 ASR en temps réel',
