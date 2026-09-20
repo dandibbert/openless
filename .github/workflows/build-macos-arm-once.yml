@@ -1,0 +1,54 @@
+name: One-off macOS ARM DMG
+
+on:
+  push:
+    branches:
+      - build-macos-arm-20260920
+
+jobs:
+  build:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: openless-all/app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: 'openless-all/app/src-tauri -> target'
+
+      - name: Install npm dependencies
+        working-directory: openless-all/app
+        run: npm ci
+
+      - name: Build Apple Silicon DMG
+        working-directory: openless-all/app
+        env:
+          INSTALL: '0'
+        run: bash scripts/build-mac.sh
+
+      - name: Show built DMG
+        run: ls -lh openless-all/app/src-tauri/target/release/bundle/dmg/
+
+      - name: Upload Apple Silicon DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: openless-macos-aarch64-latest
+          path: openless-all/app/src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          compression-level: 0
