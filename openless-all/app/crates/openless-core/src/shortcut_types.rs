@@ -27,6 +27,15 @@ const SIDE_MODIFIER_TAGS: &[&str] = &[
     "super-right",
 ];
 
+const MODIFIER_CHORD_PRIMARY: &str = "ModifierChord";
+
+pub fn is_modifier_chord_binding(binding: &ShortcutBinding) -> bool {
+    binding
+        .primary
+        .trim()
+        .eq_ignore_ascii_case(MODIFIER_CHORD_PRIMARY)
+}
+
 pub fn normalize_side_modifier_tag(raw: &str) -> String {
     match raw.trim().to_ascii_lowercase().as_str() {
         "super-left" => "cmd-left".into(),
@@ -204,6 +213,24 @@ pub fn validate_shortcut_binding(binding: &ShortcutBinding) -> Result<(), Shortc
         return Ok(());
     }
     if binding.modifiers.is_empty() && binding.primary.eq_ignore_ascii_case("shift") {
+        return Ok(());
+    }
+    if is_modifier_chord_binding(binding) {
+        if binding.modifiers.len() < 2 {
+            return Err(ShortcutBindingError::UnsupportedKey(
+                binding.primary.trim().to_string(),
+            ));
+        }
+        let mut unique = BTreeSet::new();
+        for raw in &binding.modifiers {
+            if !is_side_specific_modifier_tag(raw) {
+                return Err(ShortcutBindingError::UnsupportedModifier(raw.clone()));
+            }
+            let normalized = normalize_side_modifier_tag(raw);
+            if !unique.insert(normalized) {
+                return Err(ShortcutBindingError::UnsupportedModifier(raw.clone()));
+            }
+        }
         return Ok(());
     }
 
@@ -438,6 +465,7 @@ pub fn reject_non_dictation_side_specific_shortcuts(
         preferences.switch_style_hotkey.as_ref(),
         preferences.open_app_hotkey.as_ref(),
         preferences.coding_agent_voice_hotkey.as_ref(),
+        preferences.quick_note_hotkey.as_ref(),
     ]
     .into_iter()
     .flatten()
@@ -494,6 +522,13 @@ pub fn reject_selection_polish_hotkey_collisions(
             "选区润色快捷键不能和 Less Computer 快捷键相同",
         )?;
     }
+    if let Some(binding) = preferences.quick_note_hotkey.as_ref() {
+        reject_overlap(
+            selection_polish,
+            binding,
+            "选区润色快捷键不能和速记快捷键相同",
+        )?;
+    }
     Ok(())
 }
 
@@ -531,6 +566,10 @@ fn reject_style_pack_hotkey_overlap_with_others(
         (
             preferences.selection_polish_hotkey.as_ref(),
             "风格快捷键不能和选区润色快捷键相同",
+        ),
+        (
+            preferences.quick_note_hotkey.as_ref(),
+            "风格快捷键不能和速记快捷键相同",
         ),
     ];
     for (other, message) in optional_bindings {
@@ -585,6 +624,7 @@ pub fn reconcile_hotkey_collisions(
         Qa,
         SwitchStyle,
         OpenApp,
+        QuickNote,
         SelectionPolish,
         LessComputer,
     }
@@ -596,6 +636,7 @@ pub fn reconcile_hotkey_collisions(
                 Self::Qa => preferences.qa_hotkey.clone(),
                 Self::SwitchStyle => preferences.switch_style_hotkey.clone(),
                 Self::OpenApp => preferences.open_app_hotkey.clone(),
+                Self::QuickNote => preferences.quick_note_hotkey.clone(),
                 Self::SelectionPolish => preferences.selection_polish_hotkey.clone(),
                 Self::LessComputer => preferences.coding_agent_voice_hotkey.clone(),
             }
@@ -611,6 +652,7 @@ pub fn reconcile_hotkey_collisions(
                 Self::Qa => preferences.qa_hotkey = value,
                 Self::SwitchStyle => preferences.switch_style_hotkey = value,
                 Self::OpenApp => preferences.open_app_hotkey = value,
+                Self::QuickNote => preferences.quick_note_hotkey = value,
                 Self::SelectionPolish => preferences.selection_polish_hotkey = value,
                 Self::LessComputer => preferences.coding_agent_voice_hotkey = value,
             }
@@ -630,11 +672,12 @@ pub fn reconcile_hotkey_collisions(
         }
     }
 
-    const ORDER: [NonCoreHotkey; 6] = [
+    const ORDER: [NonCoreHotkey; 7] = [
         NonCoreHotkey::Translation,
         NonCoreHotkey::Qa,
         NonCoreHotkey::SwitchStyle,
         NonCoreHotkey::OpenApp,
+        NonCoreHotkey::QuickNote,
         NonCoreHotkey::SelectionPolish,
         NonCoreHotkey::LessComputer,
     ];
@@ -705,6 +748,34 @@ pub fn reject_hotkey_collisions(preferences: &UserPreferences) -> Result<(), Str
     let switch_style = preferences.switch_style_hotkey.as_ref();
     let open_app = preferences.open_app_hotkey.as_ref();
     let less_computer = preferences.coding_agent_voice_hotkey.as_ref();
+    let quick_note = preferences.quick_note_hotkey.as_ref();
+    if let Some(binding) = quick_note {
+        reject_overlap(
+            &preferences.dictation_hotkey,
+            binding,
+            "速记快捷键不能和听写快捷键相同",
+        )?;
+        reject_overlap(
+            &preferences.translation_hotkey,
+            binding,
+            "速记快捷键不能和翻译快捷键相同",
+        )?;
+        if let Some(other) = preferences.qa_hotkey.as_ref() {
+            reject_overlap(other, binding, "速记快捷键不能和 QA 快捷键相同")?;
+        }
+        if let Some(other) = switch_style {
+            reject_overlap(other, binding, "速记快捷键不能和切换风格快捷键相同")?;
+        }
+        if let Some(other) = open_app {
+            reject_overlap(other, binding, "速记快捷键不能和打开应用快捷键相同")?;
+        }
+        if let Some(other) = less_computer {
+            reject_overlap(other, binding, "速记快捷键不能和 Less Computer 快捷键相同")?;
+        }
+        if let Some(other) = preferences.selection_polish_hotkey.as_ref() {
+            reject_overlap(other, binding, "速记快捷键不能和选区润色快捷键相同")?;
+        }
+    }
     if let Some(qa) = preferences.qa_hotkey.as_ref() {
         reject_dictation_qa_hotkey_overlap(&preferences.dictation_hotkey, qa)?;
         reject_qa_translation_hotkey_overlap(qa, &preferences.translation_hotkey)?;
@@ -828,6 +899,21 @@ mod tests {
     }
 
     #[test]
+    fn modifier_chords_require_multiple_unique_side_specific_modifiers() {
+        let chord = combo("ModifierChord", &["ctrl-left", "super-left"]);
+        assert!(validate_shortcut_binding(&chord).is_ok());
+        assert!(binding_requires_side_aware_hook(&chord));
+        assert!(is_modifier_chord_binding(&chord));
+
+        assert!(validate_shortcut_binding(&combo("ModifierChord", &["ctrl-left"])).is_err());
+        assert!(validate_shortcut_binding(&combo("ModifierChord", &["ctrl", "super-left"])).is_err());
+        assert!(
+            validate_shortcut_binding(&combo("ModifierChord", &["cmd-left", "super-left"]))
+                .is_err()
+        );
+    }
+
+    #[test]
     fn overlap_and_legacy_conversion_have_one_shared_implementation() {
         assert!(bindings_overlap(
             &combo("D", &["ctrl-left"]),
@@ -881,6 +967,22 @@ mod tests {
         assert_eq!(adjusted, 2);
         assert_eq!(next.qa_hotkey, previous.qa_hotkey);
         assert_eq!(next.translation_hotkey, previous.translation_hotkey);
+        assert!(reject_hotkey_collisions(&next).is_ok());
+    }
+
+    #[test]
+    fn settings_reconciliation_includes_quick_note_conflicts() {
+        let previous = UserPreferences {
+            quick_note_hotkey: Some(combo("N", &["ctrl", "shift"])),
+            ..UserPreferences::default()
+        };
+        let mut next = previous.clone();
+        next.quick_note_hotkey = Some(next.dictation_hotkey.clone());
+
+        let adjusted = reconcile_hotkey_collisions(&mut next, &previous);
+
+        assert_eq!(adjusted, 1);
+        assert_eq!(next.quick_note_hotkey, previous.quick_note_hotkey);
         assert!(reject_hotkey_collisions(&next).is_ok());
     }
 

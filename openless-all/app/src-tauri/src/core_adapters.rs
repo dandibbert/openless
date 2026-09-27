@@ -55,7 +55,7 @@ pub(crate) struct TauriNativeAsrDependencies {
     foundry_generation: Arc<AtomicU64>,
     #[cfg(target_os = "windows")]
     sherpa_generation: Arc<AtomicU64>,
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     qwen_cache: Arc<crate::asr::local::LocalAsrCache>,
     #[cfg(target_os = "macos")]
     whisper_cache: Arc<crate::asr::local::LocalWhisperCache>,
@@ -80,14 +80,14 @@ impl TauriNativeAsrDependencies {
         Self {
             foundry: Arc::new(crate::asr::local::FoundryLocalRuntime::new()),
             sherpa: Arc::new(crate::asr::local::SherpaOnnxRuntime::new()),
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(target_os = "macos")]
             qwen_cache: Arc::new(crate::asr::local::LocalAsrCache::new()),
             #[cfg(target_os = "macos")]
             whisper_cache: Arc::new(crate::asr::local::LocalWhisperCache::new()),
         }
     }
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     pub(crate) fn qwen_cache(&self) -> Arc<crate::asr::local::LocalAsrCache> {
         Arc::clone(&self.qwen_cache)
     }
@@ -134,13 +134,13 @@ pub(crate) fn backend_dependencies(
             .register(*provider_type, Arc::clone(&production_asr))
             .expect("built-in ASR provider ids are non-empty");
     }
-    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     let native_asr: Arc<dyn TranscriptionEngine> = Arc::new(TauriNativeTranscriptionEngine::new(
         native_asr_dependencies,
         model_store.clone(),
         Arc::clone(&backend),
     ));
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let _ = native_asr_dependencies;
     #[cfg(target_os = "windows")]
     for provider_type in [
@@ -154,7 +154,7 @@ pub(crate) fn backend_dependencies(
             .register(provider_type, Arc::clone(&native_asr))
             .expect("native ASR provider ids are non-empty");
     }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     for provider_type in [
         crate::asr::local::PROVIDER_ID,
         crate::asr::local::LOCAL_QWEN3_MLX_PROVIDER_ID,
@@ -313,7 +313,7 @@ impl openless_core::ModelRuntimeAdapter for TauriLocalAsrRuntimeAdapter {
     fn engine_available(&self, runtime: openless_core::LocalAsrRuntime) -> bool {
         match runtime {
             openless_core::LocalAsrRuntime::Generic => {
-                cfg!(any(target_os = "macos", target_os = "linux"))
+                cfg!(target_os = "macos")
             }
             openless_core::LocalAsrRuntime::Foundry
             | openless_core::LocalAsrRuntime::SherpaOnnx => cfg!(target_os = "windows"),
@@ -327,12 +327,7 @@ impl openless_core::ModelRuntimeAdapter for TauriLocalAsrRuntimeAdapter {
                 {
                     true
                 }
-                #[cfg(target_os = "linux")]
-                {
-                    openless_core::LocalAsrModelId::from_wire_id(target.model_id())
-                        .is_some_and(openless_core::LocalAsrModelId::is_qwen)
-                }
-                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                #[cfg(not(target_os = "macos"))]
                 {
                     false
                 }
@@ -443,7 +438,7 @@ impl openless_core::ModelRuntimeAdapter for TauriLocalAsrRuntimeAdapter {
     ) -> BoxFuture<'static, Result<openless_core::LocalAsrRuntimeStatus, BackendError>> {
         let foundry = Arc::clone(&self.native.foundry);
         let sherpa = Arc::clone(&self.native.sherpa);
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(target_os = "macos")]
         let qwen_cache = Arc::clone(&self.native.qwen_cache);
         #[cfg(target_os = "macos")]
         let whisper_cache = Arc::clone(&self.native.whisper_cache);
@@ -459,9 +454,7 @@ impl openless_core::ModelRuntimeAdapter for TauriLocalAsrRuntimeAdapter {
                         } else {
                             qwen_cache.loaded_model_id()
                         };
-                    #[cfg(target_os = "linux")]
-                    let loaded = qwen_cache.loaded_model_id();
-                    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                    #[cfg(not(target_os = "macos"))]
                     let loaded: Option<String> = None;
                     Ok(openless_core::LocalAsrRuntimeStatus {
                         runtime: settings.runtime,
@@ -641,7 +634,7 @@ impl openless_core::ModelRuntimeAdapter for TauriLocalAsrRuntimeAdapter {
                 // 此时才能拿到本次激活的 MLX/C provider，不能偷读尚未提交的旧偏好。
                 openless_core::LocalAsrRuntime::Generic => {
                     let model = native_local_asr_model(&target)?;
-                    if cfg!(target_os = "macos") || (cfg!(target_os = "linux") && model.is_qwen()) {
+                    if cfg!(target_os = "macos") {
                         Ok(target.model_id().to_string())
                     } else {
                         Err(BackendError::new(
@@ -685,14 +678,14 @@ impl openless_core::ModelRuntimeAdapter for TauriLocalAsrRuntimeAdapter {
         self.invalidate_scheduled_release(runtime);
         let foundry = Arc::clone(&self.native.foundry);
         let sherpa = Arc::clone(&self.native.sherpa);
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(target_os = "macos")]
         let qwen_cache = Arc::clone(&self.native.qwen_cache);
         #[cfg(target_os = "macos")]
         let whisper_cache = Arc::clone(&self.native.whisper_cache);
         Box::pin(async move {
             match runtime {
                 openless_core::LocalAsrRuntime::Generic => {
-                    #[cfg(any(target_os = "macos", target_os = "linux"))]
+                    #[cfg(target_os = "macos")]
                     qwen_cache.release_now();
                     #[cfg(target_os = "macos")]
                     whisper_cache.release_now();
@@ -716,7 +709,7 @@ impl openless_core::ModelRuntimeAdapter for TauriLocalAsrRuntimeAdapter {
         if lease.target.runtime != openless_core::LocalAsrRuntime::Generic {
             return;
         }
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(target_os = "macos")]
         if native_local_asr_model(&lease.target).is_ok_and(|model| model.is_qwen()) {
             self.native
                 .qwen_cache
@@ -739,7 +732,7 @@ impl openless_core::ModelRuntimeAdapter for TauriLocalAsrRuntimeAdapter {
         }
         // Generic 在 macOS 下有两个独立 cache。由 cache 同锁校验模型及激活代次，
         // 不能整体 release(Generic)，也不能先查询 ID 再清空以免释放新模型。
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(target_os = "macos")]
         if native_local_asr_model(&lease.target).is_ok_and(|model| model.is_qwen()) {
             self.native
                 .qwen_cache
@@ -856,7 +849,7 @@ impl TauriLocalAsrRuntimeAdapter {
         let foundry = Arc::clone(&self.native.foundry);
         #[cfg(target_os = "windows")]
         let sherpa = Arc::clone(&self.native.sherpa);
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(target_os = "macos")]
         let qwen_cache = Arc::clone(&self.native.qwen_cache);
         #[cfg(target_os = "macos")]
         let whisper_cache = Arc::clone(&self.native.whisper_cache);
@@ -893,7 +886,7 @@ impl TauriLocalAsrRuntimeAdapter {
                     ));
                 }
             }
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(target_os = "macos")]
             {
                 let provider = provider_type.as_str();
                 let model = native_local_asr_model(&target)?;
@@ -945,7 +938,7 @@ impl TauriLocalAsrRuntimeAdapter {
                     return Ok(());
                 }
             }
-            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            #[cfg(not(target_os = "macos"))]
             let _ = model_dir;
             Err(BackendError::new(
                 BackendErrorCode::Unsupported,
@@ -953,6 +946,7 @@ impl TauriLocalAsrRuntimeAdapter {
             ))
         })
     }
+
 }
 
 #[derive(Clone)]
@@ -1074,6 +1068,16 @@ impl SelectionPlatformBridge for NativeSelectionPlatformBridge {
                 crate::selection::SelectionInsertionTargetValidation::Valid => unreachable!(),
             };
             return Err(BackendError::new(error_code, code));
+        }
+        // 贴上前一刻的最终防线：validate 的 simulate_copy 兜底期间前台焦点
+        // 可能跳走（对方恰好暴露相同文本时文本比对会放行），这里再核一次
+        // 捕获时的前台应用是否仍是前台，不是就拒绝。
+        #[cfg(target_os = "macos")]
+        if !crate::selection::selection_target_still_front(target) {
+            return Err(BackendError::new(
+                BackendErrorCode::Cancelled,
+                "selectionPolishTargetChanged",
+            ));
         }
         let preferences = self.preferences()?;
         map_insert_status(crate::insertion::TextInserter::new().insert(
@@ -1532,7 +1536,7 @@ impl openless_core::PlatformApi for TauriPlatformApi {
     }
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 struct TauriNativeTranscriptionEngine {
     dependencies: TauriNativeAsrDependencies,
     model_store: Option<Arc<openless_core::ModelStore>>,
@@ -1540,7 +1544,7 @@ struct TauriNativeTranscriptionEngine {
     backend: BackendSlot,
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 impl TauriNativeTranscriptionEngine {
     fn new(
         dependencies: TauriNativeAsrDependencies,
@@ -1556,7 +1560,7 @@ impl TauriNativeTranscriptionEngine {
     }
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 #[derive(Clone)]
 enum TauriNativeTranscriptionSessionKind {
     #[cfg(target_os = "windows")]
@@ -1569,7 +1573,7 @@ enum TauriNativeTranscriptionSessionKind {
         provider: Arc<crate::asr::local::SherpaOnnxAsr>,
         runtime: Arc<crate::asr::local::SherpaOnnxRuntime>,
     },
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     Qwen {
         engine: Arc<crate::asr::local::LocalQwenEngine>,
         cache: Arc<crate::asr::local::LocalAsrCache>,
@@ -1589,7 +1593,7 @@ enum TauriNativeTranscriptionSessionKind {
     AppleSpeech(Arc<crate::asr::local::AppleSpeechAsr>),
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 #[derive(Clone)]
 struct TauriNativeTranscriptionSession {
     kind: TauriNativeTranscriptionSessionKind,
@@ -1598,9 +1602,9 @@ struct TauriNativeTranscriptionSession {
     backend: BackendSlot,
     #[cfg(target_os = "windows")]
     session_id: SessionId,
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     partials: Arc<dyn TextStreamSink>,
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     next_offset: Arc<AtomicU64>,
     #[cfg(target_os = "windows")]
     generation: u64,
@@ -1610,7 +1614,7 @@ struct TauriNativeTranscriptionSession {
     released: Arc<AtomicBool>,
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 impl TranscriptionEngine for TauriNativeTranscriptionEngine {
     fn start(
         &self,
@@ -1638,7 +1642,7 @@ impl TranscriptionEngine for TauriNativeTranscriptionEngine {
         let backend = Arc::clone(&self.backend);
         #[cfg(target_os = "windows")]
         let sherpa = Arc::clone(&self.dependencies.sherpa);
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(target_os = "macos")]
         let qwen_cache = Arc::clone(&self.dependencies.qwen_cache);
         #[cfg(target_os = "macos")]
         let whisper_cache = Arc::clone(&self.dependencies.whisper_cache);
@@ -1752,7 +1756,7 @@ impl TranscriptionEngine for TauriNativeTranscriptionEngine {
                 ));
             };
 
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(target_os = "macos")]
             let (kind, label_model) = if crate::asr::local::is_local_qwen3(provider_type) {
                 let backend = crate::asr::local::qwen_backend_for_provider(provider_type)
                     .ok_or_else(|| {
@@ -1885,7 +1889,7 @@ impl TranscriptionEngine for TauriNativeTranscriptionEngine {
                         ));
                     }
                 }
-                #[cfg(target_os = "linux")]
+                #[cfg(not(target_os = "macos"))]
                 {
                     return Err(BackendError::new(
                         BackendErrorCode::Unsupported,
@@ -1907,9 +1911,9 @@ impl TranscriptionEngine for TauriNativeTranscriptionEngine {
                 backend,
                 #[cfg(target_os = "windows")]
                 session_id: _session_id,
-                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                #[cfg(target_os = "macos")]
                 partials,
-                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                #[cfg(target_os = "macos")]
                 next_offset: Arc::new(AtomicU64::new(0)),
                 #[cfg(target_os = "windows")]
                 generation,
@@ -1922,7 +1926,7 @@ impl TranscriptionEngine for TauriNativeTranscriptionEngine {
     }
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 impl CoreAudioConsumer for TauriNativeTranscriptionSession {
     fn consume_pcm_chunk(&self, pcm: &[u8]) {
         match &self.kind {
@@ -1934,7 +1938,7 @@ impl CoreAudioConsumer for TauriNativeTranscriptionSession {
             TauriNativeTranscriptionSessionKind::Sherpa { provider, .. } => {
                 LegacyAudioConsumer::consume_pcm_chunk(provider.as_ref(), pcm);
             }
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(target_os = "macos")]
             TauriNativeTranscriptionSessionKind::Qwen { pcm: buffer, .. } => {
                 buffer.lock().extend_from_slice(pcm);
             }
@@ -1950,7 +1954,7 @@ impl CoreAudioConsumer for TauriNativeTranscriptionSession {
     }
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 impl TranscriptionSession for TauriNativeTranscriptionSession {
     fn asr_call_label(&self) -> Option<openless_core::AsrCallLabel> {
         Some(self.asr_call_label.clone())
@@ -1962,9 +1966,9 @@ impl TranscriptionSession for TauriNativeTranscriptionSession {
 
         let session = self.clone();
         let kind = self.kind.clone();
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(target_os = "macos")]
         let partials = Arc::clone(&self.partials);
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(target_os = "macos")]
         let next_offset = Arc::clone(&self.next_offset);
         Box::pin(async move {
             #[cfg(target_os = "windows")]
@@ -2021,7 +2025,7 @@ impl TranscriptionSession for TauriNativeTranscriptionSession {
                         .map_err(map_native_asr_error)?;
                     output
                 }
-                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                #[cfg(target_os = "macos")]
                 TauriNativeTranscriptionSessionKind::Qwen {
                     engine,
                     cache: _,
@@ -2155,7 +2159,7 @@ fn foundry_transcription_notices(
     })
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 impl TauriNativeTranscriptionSession {
     fn cancel_native(&self) {
         match &self.kind {
@@ -2163,7 +2167,7 @@ impl TauriNativeTranscriptionSession {
             TauriNativeTranscriptionSessionKind::Foundry { provider, .. } => provider.cancel(),
             #[cfg(target_os = "windows")]
             TauriNativeTranscriptionSessionKind::Sherpa { provider, .. } => provider.cancel(),
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(target_os = "macos")]
             TauriNativeTranscriptionSessionKind::Qwen {
                 engine,
                 pcm,
@@ -2215,7 +2219,7 @@ impl TauriNativeTranscriptionSession {
                     Arc::clone(&self.current_generation),
                 );
             }
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(target_os = "macos")]
             TauriNativeTranscriptionSessionKind::Qwen { engine, cache, .. } => {
                 cache.finish_use(engine, discard);
                 if !discard {
@@ -2244,7 +2248,7 @@ impl TauriNativeTranscriptionSession {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux", test))]
+#[cfg(any(target_os = "macos", test))]
 async fn await_native_transcription<T>(
     timeout: std::time::Duration,
     operation: impl std::future::Future<Output = Result<T, BackendError>>,
@@ -2262,7 +2266,7 @@ async fn await_native_transcription<T>(
         })?
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 fn pcm_i16_to_f32(bytes: &[u8]) -> Vec<f32> {
     bytes
         .chunks_exact(2)
@@ -2270,12 +2274,12 @@ fn pcm_i16_to_f32(bytes: &[u8]) -> Vec<f32> {
         .collect()
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 fn pcm_duration_ms(bytes: &[u8]) -> u64 {
     (bytes.len() as u64 / 2).saturating_mul(1_000) / 16_000
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux", test))]
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
 fn local_asr_release_delay(keep_loaded_secs: u32) -> Option<std::time::Duration> {
     (keep_loaded_secs != openless_core::LOCAL_ASR_KEEP_LOADED_FOREVER_SECS)
         .then(|| std::time::Duration::from_secs(keep_loaded_secs as u64))
@@ -2354,7 +2358,7 @@ fn schedule_sherpa_release(
     });
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 fn schedule_qwen_release(
     cache: Arc<crate::asr::local::LocalAsrCache>,
     engine: std::sync::Weak<crate::asr::local::LocalQwenEngine>,
@@ -2388,12 +2392,12 @@ fn schedule_whisper_release(
     });
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 fn cancelled_native_asr_error() -> BackendError {
     BackendError::new(BackendErrorCode::Cancelled, "native ASR request cancelled")
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn map_native_asr_error(error: impl std::fmt::Display) -> BackendError {
     BackendError::new(
         BackendErrorCode::Provider,
@@ -2423,14 +2427,14 @@ struct TauriActiveRecording {
 }
 
 struct TauriRecordingArchive {
-    path: PathBuf,
+    path: Arc<Mutex<PathBuf>>,
     available: Arc<AtomicBool>,
 }
 
 impl TauriRecordingArchive {
     fn new(path: PathBuf, available: bool) -> Self {
         Self {
-            path,
+            path: Arc::new(Mutex::new(path)),
             available: Arc::new(AtomicBool::new(available)),
         }
     }
@@ -2442,7 +2446,7 @@ impl RecordingArchive for TauriRecordingArchive {
     }
 
     fn read_pcm(&self) -> BoxFuture<'static, Result<Vec<u8>, BackendError>> {
-        let path = self.path.clone();
+        let path = self.path.lock().clone();
         Box::pin(async move {
             let wav = tokio::fs::read(&path).await.map_err(|error| {
                 BackendError::new(
@@ -2465,7 +2469,7 @@ impl RecordingArchive for TauriRecordingArchive {
     }
 
     fn discard(&self) -> BoxFuture<'static, Result<(), BackendError>> {
-        let path = self.path.clone();
+        let path = self.path.lock().clone();
         let available = Arc::clone(&self.available);
         Box::pin(async move {
             if !available.load(Ordering::Acquire) {
@@ -2491,6 +2495,60 @@ impl RecordingArchive for TauriRecordingArchive {
                     ))
                 }
             }
+        })
+    }
+
+    fn promote_to_quick_note(&self) -> BoxFuture<'static, Result<(), BackendError>> {
+        let path = Arc::clone(&self.path);
+        Box::pin(async move {
+            let current = path.lock().clone();
+            let Some(file_name) = current.file_name().map(|name| name.to_owned()) else {
+                return Err(BackendError::new(
+                    BackendErrorCode::Persistence,
+                    "quick-note archive has no file name",
+                ));
+            };
+            let target = crate::persistence::quick_note_recordings_root()
+                .map_err(|error| BackendError::new(BackendErrorCode::Persistence, error.to_string()))?
+                .join(file_name);
+            if current == target {
+                return Ok(());
+            }
+            tokio::fs::rename(&current, &target).await.map_err(|error| {
+                BackendError::new(
+                    BackendErrorCode::Persistence,
+                    format!("promote quick-note recording archive: {error}"),
+                )
+            })?;
+            *path.lock() = target;
+            Ok(())
+        })
+    }
+
+    fn demote_to_ordinary_recording(&self) -> BoxFuture<'static, Result<(), BackendError>> {
+        let path = Arc::clone(&self.path);
+        Box::pin(async move {
+            let current = path.lock().clone();
+            let Some(file_name) = current.file_name().map(|name| name.to_owned()) else {
+                return Err(BackendError::new(
+                    BackendErrorCode::Persistence,
+                    "recording archive has no file name",
+                ));
+            };
+            let target = crate::persistence::recordings_root()
+                .map_err(|error| BackendError::new(BackendErrorCode::Persistence, error.to_string()))?
+                .join(file_name);
+            if current == target {
+                return Ok(());
+            }
+            tokio::fs::rename(&current, &target).await.map_err(|error| {
+                BackendError::new(
+                    BackendErrorCode::Persistence,
+                    format!("move recording archive to ordinary storage: {error}"),
+                )
+            })?;
+            *path.lock() = target;
+            Ok(())
         })
     }
 }
@@ -2566,17 +2624,33 @@ impl AudioRecorder for TauriAudioRecorder {
                     preview.stop();
                 }
             }
-            // QA/划词语音沿用1.x不落盘语义；不要先创建WAV，再依赖停止时删除。
+            let permanent_archive = !matches!(
+                context.output_target,
+                openless_core::DictationOutputTarget::ForegroundApp
+            );
+            // Undecided Android captures use the permanent quick-note spool
+            // until the terminal tap/gesture classifies the session.
             let archive_path = context
                 .recording
                 .archive_enabled
-                .then(|| crate::persistence::recording_path_for_session(&session_id.to_string()))
+                .then(|| {
+                    if permanent_archive {
+                        crate::persistence::quick_note_recording_path_for_session(
+                            &session_id.to_string(),
+                        )
+                    } else {
+                        crate::persistence::recording_path_for_session(&session_id.to_string())
+                    }
+                })
                 .transpose();
             let microphone = context.recording.microphone_device_name.clone();
             let recording_plan = context.recording.clone();
+            let prune_recordings_before_capture = recording_plan.archive_enabled
+                && (!recording_plan.archive_required
+                    || context.output_target == openless_core::DictationOutputTarget::Undecided);
             let fault_progress = Arc::clone(&progress);
             let (recording, runtime_errors) = tauri::async_runtime::spawn_blocking(move || {
-                if recording_plan.archive_enabled {
+                if prune_recordings_before_capture {
                     if let Err(error) = crate::persistence::prune_recordings(
                         recording_plan.retention_days,
                         recording_plan.max_entries,
@@ -2612,6 +2686,16 @@ impl AudioRecorder for TauriAudioRecorder {
                         return Err(map_recorder_error(error));
                     }
                 };
+                if recording_plan.archive_required && !archive_active {
+                    recorder.stop();
+                    if let Some(path) = &archive_path {
+                        let _ = std::fs::remove_file(path);
+                    }
+                    return Err(BackendError::new(
+                        BackendErrorCode::Persistence,
+                        "速记录音文件无法创建，已阻止开始录音以避免丢失内容",
+                    ));
+                }
                 let recording = Box::new(TauriActiveRecording {
                     recorder: Some(recorder),
                     archive: archive_path
@@ -2723,6 +2807,130 @@ where
     }
 }
 
+/// Worker creation follows an already completed TIS switch. Roll back that
+/// switch on startup failure, retaining the original error if rollback fails.
+#[cfg(target_os = "macos")]
+async fn start_worker_restoring_on_error<P, W, F>(
+    previous: P,
+    start: impl FnOnce() -> Result<W, BackendError>,
+    restore: impl FnOnce(P) -> F,
+) -> Result<(P, W), BackendError>
+where
+    F: std::future::Future<Output = Result<(), BackendError>>,
+{
+    match start() {
+        Ok(worker) => Ok((previous, worker)),
+        Err(error) => {
+            if let Err(restore_error) = restore(previous).await {
+                log::warn!("[core-adapter] restore input source after worker startup failed: {restore_error}");
+            }
+            Err(error)
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MacInsertionCompletion {
+    Finished(InsertOutcome),
+    Cancelled,
+}
+
+/// TIS restoration belongs to the terminal effect, never to an individual
+/// caller's future. Repeated finish/cancel callers join the same result.
+#[cfg(target_os = "macos")]
+#[derive(Default)]
+struct MacInsertionTerminal {
+    started: AtomicBool,
+    result: std::sync::OnceLock<Result<MacInsertionCompletion, BackendError>>,
+    ready: tokio::sync::Notify,
+}
+
+#[cfg(target_os = "macos")]
+impl MacInsertionTerminal {
+    fn settle(&self, result: Result<MacInsertionCompletion, BackendError>) {
+        if self.result.set(result).is_ok() {
+            self.ready.notify_waiters();
+        }
+    }
+
+    async fn join_or_spawn<F>(
+        self: &Arc<Self>,
+        effect: impl FnOnce() -> F + Send + 'static,
+        spawn: impl FnOnce(BoxFuture<'static, ()>),
+    ) -> Result<MacInsertionCompletion, BackendError>
+    where
+        F: std::future::Future<Output = Result<MacInsertionCompletion, BackendError>>
+            + Send
+            + 'static,
+    {
+        if self
+            .started
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            let guard = MacInsertionTerminalGuard(Arc::clone(self));
+            spawn(Box::pin(async move {
+                guard.settle(effect().await);
+            }));
+        }
+        loop {
+            let notified = self.ready.notified();
+            if let Some(result) = self.result.get() {
+                return result.clone();
+            }
+            notified.await;
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+struct MacInsertionTerminalGuard(Arc<MacInsertionTerminal>);
+
+#[cfg(target_os = "macos")]
+impl MacInsertionTerminalGuard {
+    fn settle(&self, result: Result<MacInsertionCompletion, BackendError>) {
+        self.0.settle(result);
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for MacInsertionTerminalGuard {
+    fn drop(&mut self) {
+        self.0.settle(Err(BackendError::new(
+            BackendErrorCode::Internal,
+            "macOS insertion finalization did not complete",
+        )));
+    }
+}
+
+/// Preserve the existing written-text outcome on TIS restoration failure, but
+/// always restore after a failed delivery barrier as well. A barrier error must
+/// not cause a second insertion of text that may already have been posted.
+#[cfg(target_os = "macos")]
+async fn finish_mac_insertion_after_barrier<B, E, R>(
+    barrier: B,
+    effect: impl FnOnce() -> E,
+    restore: impl FnOnce() -> R,
+) -> Result<MacInsertionCompletion, BackendError>
+where
+    B: std::future::Future<Output = Result<(), BackendError>>,
+    E: std::future::Future<Output = Result<MacInsertionCompletion, BackendError>>,
+    R: std::future::Future<Output = Result<(), BackendError>>,
+{
+    let result = match barrier.await {
+        Ok(()) => effect().await,
+        Err(error) => Err(error),
+    };
+    if let Err(error) = restore().await {
+        log::warn!("[core-adapter] restore input state after insertion failed: {error}");
+        if matches!(result, Ok(MacInsertionCompletion::Cancelled)) {
+            return Err(error);
+        }
+    }
+    result
+}
+
 impl CoreTextInserter for TauriTextInserter {
     fn capture_target(&self) -> Option<Arc<dyn CoreTextInserter>> {
         Some(Arc::new(Self {
@@ -2766,7 +2974,7 @@ impl CoreTextInserter for TauriTextInserter {
                 None
             };
             #[cfg(target_os = "macos")]
-            let (app_handle, previous_input_source, streaming_ready) = {
+            let (app_handle, mut previous_input_source, streaming_ready) = {
                 let app_handle = app.lock().clone().ok_or_else(|| {
                     BackendError::new(
                         BackendErrorCode::InvalidState,
@@ -2787,6 +2995,36 @@ impl CoreTextInserter for TauriTextInserter {
                 .await;
                 (app_handle, previous, streaming_ready)
             };
+            #[cfg(target_os = "macos")]
+            let cancel_requested = Arc::new(AtomicBool::new(false));
+            #[cfg(target_os = "macos")]
+            let streaming_worker = if streaming_ready {
+                let (previous, worker) = start_worker_restoring_on_error(
+                    previous_input_source,
+                    || {
+                        crate::macos_streaming_input::MacStreamingInput::spawn(
+                            insertion_target.clone(),
+                            context.insertion.macos_newline_mode,
+                            Arc::clone(&cancel_requested),
+                        )
+                    },
+                    |previous| {
+                        let app_handle = &app_handle;
+                        async move {
+                            crate::unicode_keystroke::restore_input_source(app_handle, previous)
+                                .await
+                                .map_err(|error| {
+                                    BackendError::new(BackendErrorCode::Platform, error.to_string())
+                                })
+                        }
+                    },
+                )
+                .await?;
+                previous_input_source = previous;
+                Some(worker)
+            } else {
+                None
+            };
             #[cfg(not(target_os = "macos"))]
             let _ = app;
             Ok(Arc::new(TauriTextInsertionSession {
@@ -2804,6 +3042,12 @@ impl CoreTextInserter for TauriTextInserter {
                 previous_input_source: Arc::new(Mutex::new(previous_input_source)),
                 #[cfg(target_os = "macos")]
                 streaming_ready,
+                #[cfg(target_os = "macos")]
+                streaming_worker,
+                #[cfg(target_os = "macos")]
+                cancel_requested,
+                #[cfg(target_os = "macos")]
+                terminal: Arc::new(MacInsertionTerminal::default()),
             }) as Arc<dyn TextInsertionSession>)
         })
     }
@@ -2825,6 +3069,12 @@ struct TauriTextInsertionSession {
     previous_input_source: Arc<Mutex<Option<crate::unicode_keystroke::PreviousInputSource>>>,
     #[cfg(target_os = "macos")]
     streaming_ready: bool,
+    #[cfg(target_os = "macos")]
+    streaming_worker: Option<crate::macos_streaming_input::MacStreamingInput>,
+    #[cfg(target_os = "macos")]
+    cancel_requested: Arc<AtomicBool>,
+    #[cfg(target_os = "macos")]
+    terminal: Arc<MacInsertionTerminal>,
 }
 
 impl TauriTextInsertionSession {
@@ -2840,14 +3090,31 @@ impl TauriTextInsertionSession {
     }
 
     async fn write_chunk(&self, text: String) -> Result<InsertWriteResult, BackendError> {
+        #[cfg(target_os = "macos")]
+        {
+            // A write future may have been created before a terminal caller
+            // sealed the session but only polled afterwards.
+            if self.finished.load(Ordering::Acquire) {
+                return Err(BackendError::new(
+                    BackendErrorCode::Cancelled,
+                    "text insertion session is closed",
+                ));
+            }
+            let worker = self.streaming_worker.as_ref().ok_or_else(|| {
+                BackendError::new(
+                    BackendErrorCode::Unsupported,
+                    "macOS streaming insertion is unavailable",
+                )
+            })?;
+            worker.write(text).await
+        }
+        #[cfg(not(target_os = "macos"))]
         self.restore_insertion_target()?;
-        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+        #[cfg(target_os = "windows")]
         {
             let chunk = text.clone();
             #[cfg(target_os = "windows")]
             let newline_mode = self.context.insertion.windows_sendinput_newline_mode;
-            #[cfg(target_os = "macos")]
-            let newline_mode = self.context.insertion.macos_newline_mode;
             let finished = Arc::clone(&self.finished);
             let written = tauri::async_runtime::spawn_blocking(move || {
                 if finished.load(Ordering::Acquire) {
@@ -2858,15 +3125,11 @@ impl TauriTextInsertionSession {
                     &chunk,
                     crate::unicode_keystroke::WindowsSendInputOptions { newline_mode },
                 );
-                #[cfg(target_os = "macos")]
-                let result =
-                    crate::unicode_keystroke::type_unicode_chunk_with_options(&chunk, newline_mode);
-                #[cfg(target_os = "linux")]
-                let result = crate::unicode_keystroke::type_unicode_chunk(&chunk);
-                match result {
+                let written = match result {
                     Ok(written) => written,
                     Err(error) => error.typed_chars(),
-                }
+                };
+                written
             })
             .await
             .map_err(|error| {
@@ -2879,7 +3142,7 @@ impl TauriTextInsertionSession {
                 written_chars: written,
             })
         }
-        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
         {
             let _ = text;
             Err(BackendError::new(
@@ -3007,6 +3270,56 @@ impl TauriTextInsertionSession {
         }
         Ok(())
     }
+
+    #[cfg(target_os = "macos")]
+    async fn finalize_mac(
+        self,
+        final_text: Option<String>,
+    ) -> Result<MacInsertionCompletion, BackendError> {
+        self.finished.store(true, Ordering::Release);
+        if final_text.is_none() {
+            // Separate from the normal finished latch: normal finish must not
+            // cancel Write commands already accepted by the worker's queue.
+            self.cancel_requested.store(true, Ordering::Release);
+        }
+        let terminal = Arc::clone(&self.terminal);
+        terminal
+            .join_or_spawn(
+                move || async move {
+                    let worker = self.streaming_worker.clone();
+                    let session = &self;
+                    finish_mac_insertion_after_barrier(
+                        async move {
+                            match worker {
+                                Some(worker) => worker.finish().await,
+                                None => Ok(()),
+                            }
+                        },
+                        move || async move {
+                            if session.cancel_requested.load(Ordering::Acquire) {
+                                return Ok(MacInsertionCompletion::Cancelled);
+                            }
+                            match final_text {
+                                Some(text) if !text.is_empty() => session
+                                    .insert_final(text)
+                                    .await
+                                    .map(MacInsertionCompletion::Finished),
+                                Some(_) => {
+                                    Ok(MacInsertionCompletion::Finished(InsertOutcome::Inserted))
+                                }
+                                None => Ok(MacInsertionCompletion::Cancelled),
+                            }
+                        },
+                        || session.restore_platform_state(),
+                    )
+                    .await
+                },
+                |task| {
+                    tauri::async_runtime::spawn(task);
+                },
+            )
+            .await
+    }
 }
 
 impl TextInsertionSession for TauriTextInsertionSession {
@@ -3017,7 +3330,7 @@ impl TextInsertionSession for TauriTextInsertionSession {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            cfg!(any(target_os = "windows", target_os = "linux"))
+            cfg!(target_os = "windows")
         }
     }
 
@@ -3045,34 +3358,251 @@ impl TextInsertionSession for TauriTextInsertionSession {
     ) -> BoxFuture<'static, Result<InsertOutcome, BackendError>> {
         let session = self.clone();
         Box::pin(async move {
-            if session.finished.swap(true, Ordering::AcqRel) {
-                return Err(BackendError::new(
-                    BackendErrorCode::InvalidState,
-                    "text insertion session is already closed",
-                ));
+            #[cfg(target_os = "macos")]
+            {
+                match session.finalize_mac(Some(final_text)).await? {
+                    MacInsertionCompletion::Finished(outcome) => Ok(outcome),
+                    MacInsertionCompletion::Cancelled => Err(BackendError::new(
+                        BackendErrorCode::Cancelled,
+                        "text insertion session was cancelled before completion",
+                    )),
+                }
             }
-            let result = if final_text.is_empty() {
-                Ok(InsertOutcome::Inserted)
-            } else {
-                session.insert_final(final_text).await
-            };
-            if let Err(error) = session.restore_platform_state().await {
-                // 恢复输入源失败并不能撤销已经落下的文字。保留真实交付结果，
-                // 避免历史误报失败后诱导用户重试造成重复；无论插入成败都记录恢复错误。
-                log::warn!("[core-adapter] restore input state after insertion failed: {error}");
+            #[cfg(not(target_os = "macos"))]
+            {
+                if session.finished.swap(true, Ordering::AcqRel) {
+                    return Err(BackendError::new(
+                        BackendErrorCode::InvalidState,
+                        "text insertion session is already closed",
+                    ));
+                }
+                let result = if final_text.is_empty() {
+                    Ok(InsertOutcome::Inserted)
+                } else {
+                    session.insert_final(final_text).await
+                };
+                if let Err(error) = session.restore_platform_state().await {
+                    // 恢复输入源失败并不能撤销已经落下的文字。保留真实交付结果，
+                    // 避免历史误报失败后诱导用户重试造成重复；无论插入成败都记录恢复错误。
+                    log::warn!(
+                        "[core-adapter] restore input state after insertion failed: {error}"
+                    );
+                }
+                result
             }
-            result
         })
     }
 
     fn cancel(&self) -> BoxFuture<'static, Result<(), BackendError>> {
         let session = self.clone();
         Box::pin(async move {
-            if session.finished.swap(true, Ordering::AcqRel) {
-                return Ok(());
+            #[cfg(target_os = "macos")]
+            {
+                session.finalize_mac(None).await.map(|_| ())
             }
-            session.restore_platform_state().await
+            #[cfg(not(target_os = "macos"))]
+            {
+                if session.finished.swap(true, Ordering::AcqRel) {
+                    return Ok(());
+                }
+                session.restore_platform_state().await
+            }
         })
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod mac_insertion_lifecycle_tests {
+    use super::*;
+
+    fn spawn(task: BoxFuture<'static, ()>) {
+        tokio::spawn(task);
+    }
+
+    #[tokio::test]
+    async fn worker_start_failure_restores_the_previous_source_once() {
+        let restored = Arc::new(Mutex::new(Vec::new()));
+        let error = BackendError::new(BackendErrorCode::Platform, "worker unavailable");
+        let result = start_worker_restoring_on_error(
+            7,
+            || Err::<(), _>(error.clone()),
+            |token| {
+                let restored = &restored;
+                async move {
+                    restored.lock().push(token);
+                    Ok(())
+                }
+            },
+        )
+        .await;
+        assert_eq!(result.unwrap_err(), error);
+        assert_eq!(*restored.lock(), [7]);
+        assert_eq!(
+            start_worker_restoring_on_error(
+                8,
+                || Ok(9),
+                |_| async {
+                    panic!("successful startup must retain the source for terminal cleanup")
+                }
+            )
+            .await
+            .unwrap(),
+            (8, 9)
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_barrier_skips_insertion_but_still_restores() {
+        let actions = Mutex::new(Vec::new());
+        let error = BackendError::new(BackendErrorCode::Internal, "worker stopped");
+        let result = finish_mac_insertion_after_barrier(
+            async {
+                actions.lock().push("barrier");
+                Err(error.clone())
+            },
+            || async { panic!("uncertain posted input must not be inserted again") },
+            || async {
+                actions.lock().push("restore");
+                Ok(())
+            },
+        )
+        .await;
+        assert_eq!(result.unwrap_err(), error);
+        assert_eq!(*actions.lock(), ["barrier", "restore"]);
+    }
+
+    #[tokio::test]
+    async fn failed_final_insertion_still_restores_and_preserves_its_error() {
+        let actions = Mutex::new(Vec::new());
+        let error = BackendError::new(BackendErrorCode::Platform, "target unavailable");
+        let result = finish_mac_insertion_after_barrier(
+            async {
+                actions.lock().push("barrier");
+                Ok(())
+            },
+            || async {
+                actions.lock().push("insert");
+                Err(error.clone())
+            },
+            || async {
+                actions.lock().push("restore");
+                Err(BackendError::new(
+                    BackendErrorCode::Platform,
+                    "TIS unavailable",
+                ))
+            },
+        )
+        .await;
+        assert_eq!(result.unwrap_err(), error);
+        assert_eq!(*actions.lock(), ["barrier", "insert", "restore"]);
+    }
+
+    #[tokio::test]
+    async fn restoration_error_keeps_written_outcome_but_is_reported_on_cancel() {
+        let error = BackendError::new(BackendErrorCode::Platform, "TIS unavailable");
+        let completed = MacInsertionCompletion::Finished(InsertOutcome::Inserted);
+        assert_eq!(
+            finish_mac_insertion_after_barrier(
+                async { Ok(()) },
+                || async { Ok(completed) },
+                || async { Err(error.clone()) },
+            )
+            .await
+            .unwrap(),
+            completed
+        );
+        assert_eq!(
+            finish_mac_insertion_after_barrier(
+                async { Ok(()) },
+                || async { Ok(MacInsertionCompletion::Cancelled) },
+                || async { Err(error.clone()) },
+            )
+            .await
+            .unwrap_err(),
+            error
+        );
+    }
+
+    async fn assert_terminal_join(completion: MacInsertionCompletion, drop_first: bool) {
+        let terminal = Arc::new(MacInsertionTerminal::default());
+        let actions = Arc::new(Mutex::new(Vec::new()));
+        let entered = Arc::new(tokio::sync::Semaphore::new(0));
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let observed = Arc::clone(&actions);
+        let start = Arc::clone(&entered);
+        let gate = Arc::clone(&release);
+        let mut first = Box::pin(terminal.join_or_spawn(
+            move || async move {
+                let observed = &observed;
+                finish_mac_insertion_after_barrier(
+                    async {
+                        observed.lock().push("barrier started");
+                        start.add_permits(1);
+                        gate.acquire().await.unwrap().forget();
+                        observed.lock().push("barrier drained");
+                        Ok(())
+                    },
+                    || async {
+                        observed.lock().push("effect");
+                        Ok(completion)
+                    },
+                    || async {
+                        observed.lock().push("source restored");
+                        Ok(())
+                    },
+                )
+                .await
+            },
+            spawn,
+        ));
+        assert!(futures_util::poll!(first.as_mut()).is_pending());
+        entered.acquire().await.unwrap().forget();
+        assert_eq!(*actions.lock(), ["barrier started"]);
+        let mut second = std::pin::pin!(terminal.join_or_spawn(
+            || async { panic!("duplicate terminal call must not repeat effects") },
+            spawn,
+        ));
+        assert!(futures_util::poll!(second.as_mut()).is_pending());
+        let first = if drop_first {
+            drop(first);
+            None
+        } else {
+            Some(first)
+        };
+        release.add_permits(1);
+        assert_eq!(second.await.unwrap(), completion);
+        if let Some(first) = first {
+            assert_eq!(first.await.unwrap(), completion);
+        }
+        assert_eq!(
+            *actions.lock(),
+            [
+                "barrier started",
+                "barrier drained",
+                "effect",
+                "source restored"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn repeated_finish_and_cancel_wait_for_the_same_terminal_barrier() {
+        for completion in [
+            MacInsertionCompletion::Finished(InsertOutcome::Inserted),
+            MacInsertionCompletion::Cancelled,
+        ] {
+            assert_terminal_join(completion, false).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn dropping_the_initial_terminal_future_does_not_skip_restore() {
+        for completion in [
+            MacInsertionCompletion::Finished(InsertOutcome::Inserted),
+            MacInsertionCompletion::Cancelled,
+        ] {
+            assert_terminal_join(completion, true).await;
+        }
     }
 }
 
@@ -3481,7 +4011,7 @@ mod tests {
         );
     }
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn generic_activation_uses_the_requested_target_before_preferences_commit() {
         use openless_core::{LocalAsrRuntime, LocalAsrTarget, ModelRuntimeAdapter};

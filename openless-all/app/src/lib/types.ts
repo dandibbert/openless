@@ -7,6 +7,8 @@ import type {
   AndroidInsertStrategy,
   AndroidOverlayActivationMode,
   AndroidOverlayCancelSwipeDirection,
+  AndroidOverlayGestureAction,
+  AndroidOverlayGestureActions,
   AndroidOverlayLeftSwipeAction,
   AndroidOverlayStatus,
   AndroidOverlayTrigger,
@@ -17,6 +19,8 @@ export type {
   AndroidInsertStrategy,
   AndroidOverlayActivationMode,
   AndroidOverlayCancelSwipeDirection,
+  AndroidOverlayGestureAction,
+  AndroidOverlayGestureActions,
   AndroidOverlayLeftSwipeAction,
   AndroidOverlayStatus,
   AndroidOverlayTrigger,
@@ -29,7 +33,9 @@ export type PolishMode = 'raw' | 'light' | 'structured' | 'formal';
  *  两套配置在凭据库中完全隔离，运行时只读当前模式。 */
 export type PipelineMode = 'traditional' | 'multimodal';
 
-export type InsertStatus = 'inserted' | 'pasteSent' | 'copiedFallback' | 'failed';
+export type InsertStatus = 'inserted' | 'pasteSent' | 'copiedFallback' | 'failed' | 'notRequested';
+
+export type HistorySource = 'voice' | 'quick_note' | 'selection_polish' | 'selection_voice_edit';
 
 /** 概览页年度活动热力图的单日计数（date = 本地日期 YYYY-MM-DD）。 */
 export interface ActivityDay {
@@ -44,6 +50,7 @@ export interface ActivityDay {
 export interface DictationSession {
   id: string;
   createdAt: string; // ISO-8601
+  source?: HistorySource;
   rawTranscript: string;
   /** 纠正规则**之前**的 ASR 原文。`rawTranscript` 存的是规则跑完之后的版本，
    *  两者相同时后端不写这个字段（null）。用于归因：一次误识别到底是 ASR 听错还是
@@ -343,6 +350,8 @@ export interface UserPreferences {
   showCapsule: boolean;
   /** 录音胶囊外观；保存后同步到胶囊窗口。 */
   capsuleStyle: CapsuleStyle;
+  capsuleTranscriptEnabled: boolean;
+  capsuleTranscriptFontSize: number;
   /** 录音期间临时静音系统输出，停止/取消/出错后恢复原静音状态。 */
   muteDuringRecording: boolean;
   /** 先完整录音，停止后再连接当前 ASR 并提交整段音频。默认关闭。 */
@@ -396,6 +405,8 @@ export interface UserPreferences {
   outputLanguagePreference: 'auto' | 'zhCn' | 'zhTw' | 'en' | 'ja' | 'ko';
   /** 划词语音问答快捷键。null = 未启用。详见 issue #118。 */
   qaHotkey: QaHotkeyBinding | null;
+  /** 独立速记快捷键。null = 未配置。 */
+  quickNoteHotkey: ShortcutBinding | null;
   /** 选区润色快捷键。null = 已停用。 */
   selectionPolishHotkey: ShortcutBinding | null;
   /** The style pack used only by selected written-text polishing. */
@@ -452,7 +463,7 @@ export interface UserPreferences {
   localAsrActiveModel: string;
   /** macOS 本地 Whisper 当前激活的模型 id。 */
   localWhisperActiveModel: string;
-  /** 本地模型下载源镜像（'huggingface' / 'hf-mirror'）。 */
+  /** 本地模型下载源（'huggingface' / 'hf-mirror' / 'modelscope'）。 */
   localAsrMirror: string;
   /** 本地 ASR 引擎在内存中的保留时长（秒）。0 = 说完话即释放；
    *  300 = 默认 5 分钟；86400 = 不自动释放（保持加载）。 */
@@ -518,6 +529,8 @@ export interface UserPreferences {
   /** recordings/ 里保留的最近 wav 文件数。null = 跟随 200 硬上限；1..=200 之间为用户自定义。
    *  跟 historyMaxEntries 解耦——「文本档案多但 wav 只留最近 5 条」是合法组合。 */
   audioRecordingMaxEntries: number | null;
+  /** 速记导出的录音文件保存目录。空字符串 = 每次导出时弹出保存对话框。 */
+  quickNoteExportDirectory: string;
   /** Marketplace HTTP 基地址。空 = 本地开发默认 http://127.0.0.1:8090；生产填 https://api.<domain>。 */
   marketplaceBaseUrl: string;
   /** GitHub login 展示缓存。不用于认证；OAuth token 只存在 Rust CredentialsVault。 */
@@ -540,6 +553,8 @@ export interface UserPreferences {
   androidOverlayLeftSwipeAction: AndroidOverlayLeftSwipeAction;
   /** Android: vertical swipe direction that cancels recording. */
   androidOverlayCancelSwipeDirection: AndroidOverlayCancelSwipeDirection;
+  /** Android: action assigned to each overlay swipe direction. */
+  androidOverlayGestureActions: AndroidOverlayGestureActions;
   /** Android: floating overlay control diameter in dp. */
   androidOverlaySizeDp: number;
   /** 开屏 PV 的主版本世代标记（如 '2'）。空 = 从未播过；由 Rust 侧
@@ -635,6 +650,12 @@ export type LessComputerEvent =
         phase: 'starting' | 'recording' | 'transcribing' | 'idle';
         level: number;
         elapsedMs: number;
+        /** 缺省按 submit 处理（旧事件与快捷键路径）。 */
+        mode?: LessComputerVoiceMode;
+        /** 本会话迄今的完整转写，录音中随实时识别更新。 */
+        transcript?: string;
+        /** 仅 idle 时出现，描述本次录音如何收尾。 */
+        outcome?: LessComputerVoiceOutcome;
       }
     /** 一轮用户气泡（语音指令转写）。fresh=true 表示新会话（清空历史）；否则追加为后续轮次。 */
     | { kind: 'user'; text: string; fresh?: boolean }
@@ -661,6 +682,11 @@ export type LessComputerEvent =
   };
 
 export type LessComputerVoiceEvent = Extract<LessComputerEvent, { kind: 'voice_state' }>;
+
+/** submit：说完直接交给 Agent；dictate：转写填进输入框，由用户编辑后发送。 */
+export type LessComputerVoiceMode = 'submit' | 'dictate';
+
+export type LessComputerVoiceOutcome = 'submitted' | 'committed' | 'empty' | 'failed' | 'cancelled';
 
 /** `less_computer_sync` 的有界 replay 结果。`truncated=true` 表示调用方的水位
  * 已早于后端仍保留的最老事件，前端必须清空派生视图后再应用 `events`。 */

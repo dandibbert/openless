@@ -2,7 +2,12 @@ import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } f
 import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { formatComboParts, modifiersFromPressedCodes } from '../lib/hotkey';
+import {
+  chordModifiersFromPressedCodes,
+  formatComboParts,
+  MODIFIER_CHORD_PRIMARY,
+  modifiersFromPressedCodes,
+} from '../lib/hotkey';
 import { functionKeyPrimaryFromEvent } from '../lib/hotkeyRecorder';
 import { KbdGroup } from './Kbd';
 import { setShortcutRecordingActive, validateShortcutBinding } from '../lib/ipc';
@@ -194,6 +199,20 @@ export function ShortcutRecorder({
       if (comboOnly) {
         return;
       }
+      if (sideSpecificModifiers) {
+        const modifiers = chordModifiersFromPressedCodes(pressedCodes.current);
+        if (modifiers.length >= 2) {
+          clearPendingModifier();
+          const binding = { primary: MODIFIER_CHORD_PRIMARY, modifiers };
+          pendingModifier.current = binding;
+          pendingTimer.current = window.setTimeout(() => {
+            if (pendingModifier.current === binding) {
+              void finish(binding);
+            }
+          }, 650);
+          return;
+        }
+      }
       const primary = modifierPrimaryFromCode(e.code, e.key);
       if (!primary || pendingModifier.current?.primary === primary) return;
       clearPendingModifier();
@@ -222,6 +241,12 @@ export function ShortcutRecorder({
     e.stopPropagation();
     pressedCodes.current.delete(e.code);
     if (comboOnly) return;
+    if (pendingModifier.current?.primary === MODIFIER_CHORD_PRIMARY) {
+      const binding = pendingModifier.current;
+      clearPendingModifier();
+      void finish(binding);
+      return;
+    }
     const primary = modifierPrimaryFromCode(e.code, e.key);
     if (primary && pendingModifier.current?.primary === primary) {
       const binding = pendingModifier.current;
@@ -367,7 +392,6 @@ export function ShortcutRecorder({
               {value && <KbdGroup keys={formatComboParts(value)} />}
               <div style={controlsGroupStyle}>
                 <motion.button
-                  whileTap={{ scale: 0.9 }}
                   onClick={() => setMenuOpen((open) => !open)}
                   aria-label={t('settings.recording.comboMenuToggle', 'More options')}
                   aria-expanded={menuOpen}
@@ -427,8 +451,6 @@ export function ShortcutRecorder({
                       initial={{ y: 4, opacity: 0 }}
                       animate={{ y: 0, opacity: 1 }}
                       transition={{ duration: 0.16, ease: menuEase }}
-                      whileHover={{ y: -1 }}
-                      whileTap={{ scale: 0.96 }}
                       onClick={startRecording}
                       style={menuPrimaryStyle}
                     >
@@ -439,8 +461,6 @@ export function ShortcutRecorder({
                         initial={{ y: 4, opacity: 0 }}
                         animate={{ y: 0, opacity: 1 }}
                         transition={{ duration: 0.16, ease: menuEase, delay: 0.03 }}
-                        whileHover={{ y: -1 }}
-                        whileTap={{ scale: 0.96 }}
                         onClick={doReset}
                         style={menuButtonStyle}
                       >
@@ -451,8 +471,6 @@ export function ShortcutRecorder({
                       initial={{ y: 4, opacity: 0 }}
                       animate={{ y: 0, opacity: 1 }}
                       transition={{ duration: 0.16, ease: menuEase, delay: 0.06 }}
-                      whileHover={canDisable ? { y: -1 } : undefined}
-                      whileTap={canDisable ? { scale: 0.96 } : undefined}
                       onClick={canDisable ? doDisable : undefined}
                       title={canDisable ? undefined : disableHint}
                       style={canDisable ? menuButtonStyle : disabledMenuButtonStyle}
