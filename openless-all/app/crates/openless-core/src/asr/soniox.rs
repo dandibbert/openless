@@ -23,11 +23,12 @@ use futures_util::{SinkExt, StreamExt};
 use parking_lot::Mutex as ParkingMutex;
 use serde_json::{json, Value};
 use tokio::net::TcpStream;
-use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+
+use crate::config::{TaskSpawner, TokioTaskSpawner};
 
 use super::{AudioConsumer, RawTranscript};
 
@@ -108,7 +109,6 @@ struct SyncState {
     bytes_received: u64,
     task_started: bool,
     task_finished: bool,
-    runtime: Option<Handle>,
     start: Option<Instant>,
     final_tx: Option<oneshot::Sender<Result<RawTranscript, SonioxASRError>>>,
     send_tx: Option<mpsc::UnboundedSender<SendItem>>,
@@ -120,6 +120,7 @@ struct SyncState {
 
 pub struct SonioxStreamingASR {
     credentials: SonioxCredentials,
+    task_spawner: Arc<dyn TaskSpawner>,
     state: ParkingMutex<SyncState>,
     writer: SharedWriter,
     final_rx: ParkingMutex<Option<oneshot::Receiver<Result<RawTranscript, SonioxASRError>>>>,
@@ -127,8 +128,16 @@ pub struct SonioxStreamingASR {
 
 impl SonioxStreamingASR {
     pub fn new(credentials: SonioxCredentials) -> Self {
+        Self::with_task_spawner(credentials, Arc::new(TokioTaskSpawner))
+    }
+
+    pub fn with_task_spawner(
+        credentials: SonioxCredentials,
+        task_spawner: Arc<dyn TaskSpawner>,
+    ) -> Self {
         Self {
             credentials,
+            task_spawner,
             state: ParkingMutex::new(SyncState::default()),
             writer: Arc::new(AsyncMutex::new(None)),
             final_rx: ParkingMutex::new(None),
@@ -156,7 +165,6 @@ impl SonioxStreamingASR {
         {
             let mut st = self.state.lock();
             *st = SyncState::default();
-            st.runtime = Some(Handle::current());
             st.start = Some(Instant::now());
             st.final_tx = Some(final_tx);
             st.send_tx = Some(send_tx);
@@ -164,7 +172,8 @@ impl SonioxStreamingASR {
         *self.final_rx.lock() = Some(final_rx);
 
         let writer_for_worker = Arc::clone(&self.writer);
-        tokio::spawn(async move {
+        let task_spawner = Arc::clone(&self.task_spawner);
+        task_spawner.spawn(Box::pin(async move {
             while let Some(item) = send_rx.recv().await {
                 match item {
                     SendItem::Audio(chunk) => {
@@ -181,7 +190,7 @@ impl SonioxStreamingASR {
                     }
                 }
             }
-        });
+        }));
 
         // 配置消息必须在任何音频之前发出。
         send_text(
@@ -196,7 +205,8 @@ impl SonioxStreamingASR {
         self.state.lock().config_sent = true;
 
         let weak_self = Arc::downgrade(self);
-        tokio::spawn(async move {
+        let task_spawner = Arc::clone(&self.task_spawner);
+        task_spawner.spawn(Box::pin(async move {
             let mut read = read;
             while let Some(msg) = read.next().await {
                 let Some(this) = weak_self.upgrade() else {
@@ -222,7 +232,7 @@ impl SonioxStreamingASR {
                     }
                 }
             }
-        });
+        }));
 
         Ok(())
     }
@@ -279,20 +289,7 @@ impl SonioxStreamingASR {
         st.final_tx.take();
         st.task_finished = true;
         drop(st);
-        let writer = Arc::clone(&self.writer);
-        if let Ok(handle) = Handle::try_current() {
-            handle.spawn(async move {
-                let _ = close_writer(&writer).await;
-            });
-        } else {
-            std::thread::spawn(move || {
-                if let Ok(rt) = tokio::runtime::Runtime::new() {
-                    rt.block_on(async move {
-                        let _ = close_writer(&writer).await;
-                    });
-                }
-            });
-        }
+        self.close_on_runtime();
     }
 
     fn handle_text_message(&self, text: &str) -> bool {
@@ -435,11 +432,9 @@ impl SonioxStreamingASR {
 
     fn close_on_runtime(&self) {
         let writer = Arc::clone(&self.writer);
-        if let Some(handle) = self.state.lock().runtime.clone() {
-            handle.spawn(async move {
-                let _ = close_writer(&writer).await;
-            });
-        }
+        self.task_spawner.spawn(Box::pin(async move {
+            let _ = close_writer(&writer).await;
+        }));
     }
 }
 
