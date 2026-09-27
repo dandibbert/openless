@@ -13,6 +13,10 @@ pub mod auxiliary;
 pub mod cli;
 mod cloud_providers;
 pub mod cloud_sync;
+pub mod cloud_sync_e2ee;
+pub mod cloud_sync_e2ee_documents;
+mod cloud_sync_e2ee_protocol;
+pub mod cloud_sync_e2ee_store;
 mod cloud_sync_transaction;
 mod cloud_sync_types;
 mod cloud_sync_validation;
@@ -181,27 +185,27 @@ pub mod contract {
         BackendSnapshot, CliDispatchOutcome, CliIntent, Clock, CorrectionRule, CredentialKey,
         CredentialMetadata, CredentialNamespace, CredentialStore, CredentialsStatus,
         DictationContext, DictationEngine, DictationHotkeyDispatchOptions, DictationHotkeyEdge,
-        DictationInsertStatus, DictationPhase, DictationResult, DictationSession,
-        DictationStartOptions, DictationStateSnapshot, DictionaryEntry, DirectoryResourceResolver,
-        DownloadProgress, EngineFailure, EngineFailureStage, EngineProgress, EngineProgressSink,
-        EngineResult, EngineStage, EventRecvError, EventSubscription, HistoryChange,
-        HistoryInsertStatus, HistorySource, HostAction, HostActions, HostContextAdapter,
-        HostContextCapture, HotkeyRuntimeTarget, HotkeyStatus, InMemoryCredentialStore,
-        InsertFallbackPayload, InsertOutcome, LessComputerEvent, LessComputerEventKind,
-        LessComputerHotkeyAction, LessComputerVoiceSession, LocalAsrMirror, LocalAsrModelId,
-        LocalAsrRuntime, LocalAsrTarget, NotificationLevel, NotificationPayload, OpenLessBackend,
-        PendingCorrection, PermissionSnapshot, PermissionState, PlatformCapabilities, PolishDelta,
-        PolishFailurePolicy, PolishMode, PolishOutput, ProviderService, QaVoiceCaptureResult,
-        QaVoiceCaptureSession, RecordingArchive, RecordingControlAction, RecordingControlRequest,
-        RecordingControlSink, RecordingEvent, RecordingPlan, RecordingProgressSink,
-        ResourceResolver, RuleSource, SecretValue, SelectionPolishOutputMode,
-        SelectionVoiceIntentMode, SelectionVoiceManualIntent, SessionId, SettingsCollisionPolicy,
-        SettingsEffectFailure, SettingsEffectKind, SettingsEffectPlan, SettingsEffectReceipt,
-        SettingsRuntime, SettingsUpdateOptions, SettingsUpdateOutcome, SettingsValueChange,
-        StartupSnapshot, StylePack, StylePackChange, StylePackExample, StylePackKind, TaskSpawner,
-        TextInserter, TextPolisher, TextStreamChunk, TextStreamSink, TokioTaskSpawner,
-        TranscriptAccumulator, TranscriptDelta, TranscriptOutput, TranscriptionEngine,
-        TranscriptionSession, VocabPreset, VocabPresetStore, VocabularyChange,
+        DictationInsertStatus, DictationOutputTarget, DictationPhase, DictationResult,
+        DictationSession, DictationStartOptions, DictationStateSnapshot, DictionaryEntry,
+        DirectoryResourceResolver, DownloadProgress, EngineFailure, EngineFailureStage,
+        EngineProgress, EngineProgressSink, EngineResult, EngineStage, EventRecvError,
+        EventSubscription, HistoryChange, HistoryInsertStatus, HistorySource, HostAction,
+        HostActions, HostContextAdapter, HostContextCapture, HotkeyRuntimeTarget, HotkeyStatus,
+        InMemoryCredentialStore, InsertFallbackPayload, InsertOutcome, LessComputerEvent,
+        LessComputerEventKind, LessComputerHotkeyAction, LessComputerVoiceSession, LocalAsrMirror,
+        LocalAsrModelId, LocalAsrRuntime, LocalAsrTarget, NotificationLevel, NotificationPayload,
+        OpenLessBackend, PendingCorrection, PermissionSnapshot, PermissionState,
+        PlatformCapabilities, PolishDelta, PolishFailurePolicy, PolishMode, PolishOutput,
+        ProviderService, QaVoiceCaptureResult, QaVoiceCaptureSession, RecordingArchive,
+        RecordingControlAction, RecordingControlRequest, RecordingControlSink, RecordingEvent,
+        RecordingPlan, RecordingProgressSink, ResourceResolver, RuleSource, SecretValue,
+        SelectionPolishOutputMode, SelectionVoiceIntentMode, SelectionVoiceManualIntent, SessionId,
+        SettingsCollisionPolicy, SettingsEffectFailure, SettingsEffectKind, SettingsEffectPlan,
+        SettingsEffectReceipt, SettingsRuntime, SettingsUpdateOptions, SettingsUpdateOutcome,
+        SettingsValueChange, StartupSnapshot, StylePack, StylePackChange, StylePackExample,
+        StylePackKind, TaskSpawner, TextInserter, TextPolisher, TextStreamChunk, TextStreamSink,
+        TokioTaskSpawner, TranscriptAccumulator, TranscriptDelta, TranscriptOutput,
+        TranscriptionEngine, TranscriptionSession, VocabPreset, VocabPresetStore, VocabularyChange,
         VoiceTranscriptionSession, BACKEND_CONTRACT_VERSION, DICTATION_SAMPLE_RATE,
     };
 }
@@ -209,8 +213,9 @@ pub mod contract {
 pub use activity::{ActivityDay, ActivityStore, DayStats};
 pub use api::{
     BackendRepositories, BackendSnapshot, CliDispatchOutcome, DictationHotkeyDispatchOptions,
-    DictationHotkeyEdge, LessComputerHotkeyAction, LessComputerVoiceSession, OpenLessBackend,
-    QaVoiceCaptureResult, QaVoiceCaptureSession, StartupSnapshot, VoiceTranscriptionSession,
+    DictationHotkeyEdge, LessComputerHotkeyAction, LessComputerVoiceFinish,
+    LessComputerVoiceOptions, LessComputerVoiceSession, OpenLessBackend, QaVoiceCaptureResult,
+    QaVoiceCaptureSession, StartupSnapshot, VoiceTranscriptionSession,
 };
 pub use audio::{encode_dictation_wav, NormalizedPcmChunk, PcmNormalizer, DICTATION_SAMPLE_RATE};
 pub use auxiliary::{
@@ -238,8 +243,9 @@ pub use credentials::{
 };
 pub use dictation_context::{
     build_asr_prompt, eligible_polish_context_turns, DictationAudioSource, DictationContext,
-    DictationInsertionContext, DictationPolishContext, DictationStartOptions, DictationStopOptions,
-    PolishHistoryTurn, ProviderInvocation, RecordingPlan, ASR_PROMPT_CHAR_BUDGET,
+    DictationInsertionContext, DictationOutputTarget, DictationPolishContext,
+    DictationStartOptions, DictationStopOptions, PolishHistoryTurn, ProviderInvocation,
+    RecordingPlan, ASR_PROMPT_CHAR_BUDGET,
 };
 pub use dictation_engine::{PipelineDictationEngine, PolishFailurePolicy};
 pub use domains::*;
@@ -251,10 +257,10 @@ pub use errors::{BackendError, BackendErrorCode};
 pub use events::{
     BackendEvent, BackendEventKind, BackendEventPublisher, CodingAgentStreamEvent, EventRecvError,
     EventReplay, EventSubscription, LessComputerEvent, LessComputerEventKind,
-    LessComputerVoicePhase, LocalAsrDownloadPhase, LocalAsrDownloadProgress, LocalAsrPreparePhase,
-    LocalAsrPrepareProgress, LocalAsrRuntimeKind, QaRecordingLevel, QaStateEvent, QaStateKind,
-    RecordingControlAction, RecordingControlRequest, RemoteInputErrorEvent,
-    RemoteInputRuntimeEvent,
+    LessComputerVoiceMode, LessComputerVoiceOutcome, LessComputerVoicePhase, LocalAsrDownloadPhase,
+    LocalAsrDownloadProgress, LocalAsrPreparePhase, LocalAsrPrepareProgress, LocalAsrRuntimeKind,
+    QaRecordingLevel, QaStateEvent, QaStateKind, RecordingControlAction, RecordingControlRequest,
+    RemoteInputErrorEvent, RemoteInputRuntimeEvent,
 };
 pub use external_audio::{AudioRecorderRouter, ExternalAudioRecorder};
 pub use history::{HistoryStore, HISTORY_CAP};
@@ -325,8 +331,8 @@ pub use shared_types::{
 };
 pub use shortcut_types::{
     binding_from_legacy_trigger, binding_requires_side_aware_hook, bindings_overlap,
-    is_side_specific_modifier_tag, legacy_modifier_trigger, normalize_side_modifier_tag,
-    reconcile_hotkey_collisions, reject_bare_shift_dictation_shortcut,
+    is_modifier_chord_binding, is_side_specific_modifier_tag, legacy_modifier_trigger,
+    normalize_side_modifier_tag, reconcile_hotkey_collisions, reject_bare_shift_dictation_shortcut,
     reject_dictation_qa_hotkey_overlap, reject_dictation_translation_hotkey_overlap,
     reject_hotkey_collisions, reject_modifier_only_action_shortcut,
     reject_non_dictation_side_specific_shortcuts, reject_qa_less_computer_hotkey_overlap,
@@ -358,4 +364,7 @@ pub use types::{
     SelectionVoiceIntentMode, SelectionVoiceManualIntent, SessionId, StylePackChange,
     TranscriptAccumulator, TranscriptDelta, VocabPreset, VocabPresetStore, VocabularyChange,
 };
-pub use vocabulary::{list_vocab_presets, save_vocab_presets, DictionaryStore};
+pub use vocabulary::{
+    builtin_vocab_presets, list_vocab_presets, resolve_vocab_presets, save_vocab_presets,
+    DictionaryStore,
+};

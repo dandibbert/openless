@@ -65,6 +65,7 @@ export {
   getActivityStats,
   readAudioRecording,
   retranscribeRecording,
+  applyQuickNoteRepolish,
 } from './history';
 
 // vocab
@@ -140,6 +141,7 @@ export {
   setTranslationHotkey,
   setSwitchStyleHotkey,
   setOpenAppHotkey,
+  setQuickNoteHotkey,
   setStylePackHotkeys,
   setShortcutRecordingActive,
 } from './hotkeys';
@@ -159,6 +161,8 @@ export {
   getQaHotkeyLabel,
   setQaHotkey,
   qaWindowDismiss,
+  qaWindowSetExpanded,
+  qaGetSnapshot,
   qaToggleRecording,
   qaSubmitText,
   qaSetEditInstructionMode,
@@ -186,6 +190,10 @@ export {
   lessComputerApprove,
   lessComputerSubmitText,
   lessComputerSync,
+  lessComputerVoiceStart,
+  lessComputerVoiceStop,
+  lessComputerVoiceCancel,
+  lessComputerTaskCancel,
 } from './less-computer';
 
 // chat-panel（QA / Less Computer 共用）

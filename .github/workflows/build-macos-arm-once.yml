@@ -1,0 +1,115 @@
+name: One-off macOS ARM DMG
+
+# Manual Apple Silicon package. Does not create a tag or publish a Release.
+# Only changes to this file retrigger the build.
+on:
+  push:
+    branches:
+      - cursor/sync-upstream-beta-0eed
+    paths:
+      - .github/workflows/build-macos-arm-once.yml
+
+concurrency:
+  group: macos-arm-dmg-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build macOS ARM DMG
+    runs-on: macos-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: openless-all/app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Configure macOS build environment
+        working-directory: openless-all/app
+        run: bash scripts/macos-build-env.sh
+
+      - name: Cache macOS release dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          key: macos-release-v1
+          workspaces: openless-all/app/src-tauri -> target
+
+      - name: Cache macOS MLX native build
+        uses: ./.github/actions/cache-macos-mlx
+        with:
+          profile: release
+
+      - name: Install npm dependencies
+        working-directory: openless-all/app
+        run: npm ci
+
+      - name: Import Apple Developer ID certificate
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          if [ -z "${APPLE_CERTIFICATE:-}" ] || [ -z "${APPLE_CERTIFICATE_PASSWORD:-}" ]; then
+            echo "No Apple certificate secrets configured; macOS build will use ad-hoc signing."
+            exit 0
+          fi
+
+          KEYCHAIN_PASSWORD="${KEYCHAIN_PASSWORD:-$(openssl rand -base64 32)}"
+          CERT_PATH="$RUNNER_TEMP/openless-certificate.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/openless-build.keychain-db"
+
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -t 3600 -u "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          DEVELOPER_ID_INFO="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep 'Developer ID Application' | head -n 1)"
+          if [ -n "$DEVELOPER_ID_INFO" ]; then
+            CERT_INFO="$DEVELOPER_ID_INFO"
+          else
+            CERT_INFO="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -E 'Apple Distribution|Apple Development' | head -n 1)"
+          fi
+          if [ -z "$CERT_INFO" ]; then
+            echo "Apple certificate imported, but no usable code-signing identity was found."
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+            exit 1
+          fi
+
+          CERT_ID="$(echo "$CERT_INFO" | awk -F'"' '{print $2}')"
+          echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
+          echo "Imported Apple signing identity: $CERT_ID"
+
+      - name: Build Apple Silicon DMG
+        working-directory: openless-all/app
+        env:
+          INSTALL: "0"
+        run: bash scripts/build-mac.sh
+
+      - name: Show built DMG
+        run: ls -lh openless-all/app/src-tauri/target/release/bundle/dmg/
+
+      - name: Upload Apple Silicon DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: openless-macos-aarch64
+          path: openless-all/app/src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          compression-level: 0

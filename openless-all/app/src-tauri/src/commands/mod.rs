@@ -1,4 +1,3 @@
-#![cfg_attr(target_os = "linux", allow(dead_code, unused_variables))]
 //! Tauri IPC 命令入口，按设置、凭据、历史等领域拆分子模块。
 //!
 //! 子模块的命令及宏生成的伴生项通过 glob 重导出，供 `lib.rs` 的
@@ -49,6 +48,7 @@ pub(crate) use crate::types::{
 
 mod channels;
 mod cloud_sync;
+mod cloud_sync_e2ee;
 mod credentials;
 mod dictation;
 mod dictionary;
@@ -79,6 +79,7 @@ mod style_packs;
 
 pub use channels::*;
 pub use cloud_sync::*;
+pub use cloud_sync_e2ee::*;
 pub use credentials::*;
 pub use dictation::*;
 pub use dictionary::*;
@@ -318,7 +319,7 @@ mod tests {
             &whisper_keyless_ready
         ));
 
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(target_os = "macos")]
         {
             assert!(asr_configured_for_provider(
                 crate::asr::local::PROVIDER_ID,
@@ -329,7 +330,7 @@ mod tests {
                 &snapshot()
             ));
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(target_os = "macos"))]
         assert!(!asr_configured_for_provider(
             crate::asr::local::PROVIDER_ID,
             &snapshot()

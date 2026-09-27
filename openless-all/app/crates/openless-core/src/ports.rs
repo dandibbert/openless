@@ -277,6 +277,7 @@ pub trait DictationEngine: Send + Sync + 'static {
     /// It uses the same buffered lifecycle as normal voice capture.
     fn start_transcription_with_progress(
         self: Arc<Self>,
+        task_spawner: Arc<dyn crate::TaskSpawner>,
         session_id: SessionId,
         context: Arc<DictationContext>,
         partials: Arc<dyn TextStreamSink>,
@@ -286,7 +287,11 @@ pub trait DictationEngine: Send + Sync + 'static {
         Box::pin(async move {
             let prepared = preparation.await?;
             Ok(crate::dictation_engine::buffered_transcription_session(
-                prepared, context, partials, progress,
+                prepared,
+                context,
+                partials,
+                progress,
+                task_spawner,
             ))
         })
     }
@@ -423,6 +428,17 @@ pub trait RecordingControlSink: Send + Sync {
 /// immutable session policy.
 pub trait RecordingArchive: Send + Sync {
     fn is_available(&self) -> bool;
+
+    /// Move an undecided capture into the permanent quick-note archive.
+    /// Hosts that do not need separate storage can keep the default no-op.
+    fn promote_to_quick_note(&self) -> BoxFuture<'static, Result<(), BackendError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    /// Move a retained undecided capture back into ordinary debug storage.
+    fn demote_to_ordinary_recording(&self) -> BoxFuture<'static, Result<(), BackendError>> {
+        Box::pin(async { Ok(()) })
+    }
 
     fn read_pcm(&self) -> BoxFuture<'static, Result<Vec<u8>, BackendError>> {
         Box::pin(async {

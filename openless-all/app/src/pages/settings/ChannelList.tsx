@@ -93,10 +93,10 @@ export function presetsFor(
   if (kind === 'llm') return descriptorPresets;
   const available = descriptorPresets;
   const visible = available.filter((p) => {
-    // 本地引擎严格按其实际支持的平台暴露；Linux / Android 不展示桌面专有实现。
+    // 本地引擎严格按其实际支持的平台暴露；Android 不展示桌面专有实现。
     if (p.id === 'local-qwen3-mlx') return os === 'mac' && supportsQwen3Mlx;
     if (p.id === 'local-whisper' || p.id === 'apple-speech') return os === 'mac';
-    if (p.id === 'local-qwen3-c') return os === 'mac' || os === 'linux';
+    if (p.id === 'local-qwen3-c') return os === 'mac';
     if (p.id === 'local-qwen3') return false;
     if (p.id === 'foundry-local-whisper' || p.id === 'sherpa-onnx-local') {
       return os === 'win';
@@ -764,7 +764,9 @@ export function ChannelList({
                     {t(
                       testingIds[channel.id]
                         ? 'settings.channels.verifying'
-                        : 'settings.channels.verify',
+                        : channel.lastTest && !channel.lastTest.ok
+                          ? 'settings.channels.reverify'
+                          : 'settings.channels.verify',
                     )}
                   </Btn>
                 )}
@@ -877,13 +879,22 @@ function ChannelTestResult({
         <>
           <span
             style={{
-              color: stale ? 'var(--ol-ink-3)' : passed ? 'var(--ol-ok)' : 'var(--ol-warn)',
+              color: stale ? 'var(--ol-ink-2)' : passed ? 'var(--ol-ok)' : 'var(--ol-err)',
             }}
           >
             {passed
               ? t('settings.channels.passed')
-              : t('settings.channels.failed', { reason: shortErrorLabel(last?.error ?? null, t) })}
+              : shortErrorLabel(last?.error ?? null, t) === t('settings.channels.errGeneric')
+                ? t('settings.channels.failedPlain')
+                : t('settings.channels.failed', {
+                    reason: shortErrorLabel(last?.error ?? null, t),
+                  })}
           </span>
+          {!passed && (
+            <span style={{ color: 'var(--ol-ink-2)' }}>
+              {t('settings.channels.failureKeepsEnabled')}
+            </span>
+          )}
           {passed && elapsed != null && (
             <span>{t('settings.channels.elapsed', { ms: elapsed })}</span>
           )}

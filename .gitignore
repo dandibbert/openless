@@ -126,3 +126,7 @@ CapsWriter
 /.idea/vcs.xml
 /openless-all/app/pnpm-lock.yaml
 /openless-all/app/pnpm-workspace.yaml
+
+# Local Linux toolchains, build logs and packaging workspaces.
+openless-all/app/.cache/
+openless-all/scripts/linux-desktop/kde/build/
