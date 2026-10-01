@@ -70,6 +70,7 @@ import {
 import { reconcileLessComputerReplay, reduceLessComputerVoice } from '../lib/lessComputerReplay';
 import type { LessComputerEvent, LessComputerVoiceEvent } from '../lib/types';
 import '../components/chat/chat.css';
+import { isImeCompositionEvent } from '../lib/imeKeyboard';
 
 type RunStatus = 'idle' | 'working' | 'done' | 'error' | 'cancelled';
 
@@ -385,6 +386,7 @@ export function LessComputerPanel() {
   // ── Esc 关闭 ────────────────────────────────────────────────────────
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (isImeCompositionEvent(event)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         void lessComputerWindowDismiss();
