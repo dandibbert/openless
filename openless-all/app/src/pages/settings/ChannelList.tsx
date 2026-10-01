@@ -55,6 +55,7 @@ import {
 import { ProviderFormContext, useProviderForm } from './ProviderForm';
 import { ASR_LABELS, inputStyle } from './shared';
 import { ChannelEditorHostContext } from './ChannelEditorHostContext';
+import { isImeCompositionEvent } from '../../lib/imeKeyboard';
 
 type ChannelKind = 'llm' | 'asr';
 
@@ -1016,7 +1017,7 @@ function ChannelModal({
 
   const onDialogKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const dialog = dialogRef.current;
-    if (!dialog || event.defaultPrevented) return;
+    if (!dialog || event.defaultPrevented || isImeCompositionEvent(event)) return;
     if (event.target instanceof Element && event.target.closest('[role="dialog"]') !== dialog)
       return;
     if (event.key === 'Escape') {
