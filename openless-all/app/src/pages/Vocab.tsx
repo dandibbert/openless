@@ -26,6 +26,7 @@ import { useExitMount } from '../lib/useExitMount';
 import { useMobileLayout } from '../lib/useMobileLayout';
 import { Btn, Card, Collapsible, PageHeader } from './_atoms';
 
+import { isImeCompositionEvent } from '../lib/imeKeyboard';
 const NEW_PRESET_DRAFT_ID = '__new__';
 
 /** 自动收集词条靠 note 认（后端 accept_pending_correction 打的就是这个标记）。 */
@@ -498,6 +499,7 @@ export function Vocab() {
               if (!query) setSearchOpen(false);
             }}
             onKeyDown={(e) => {
+              if (isImeCompositionEvent(e)) return;
               if (e.key === 'Escape') {
                 setQuery('');
                 setSearchOpen(false);
@@ -994,6 +996,7 @@ function ModalShell({ title, desc, closing = false, onClose, children }: ModalSh
   const { t } = useTranslation();
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (isImeCompositionEvent(e)) return;
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKeyDown, true);
