@@ -20,6 +20,7 @@ import {
   type SupportedLocale,
 } from '../../i18n';
 import { readFontScale, setFontScale, type FontScaleId } from '../../lib/fontScale';
+import { isImeCompositionEvent } from '../../lib/imeKeyboard';
 
 type Action = 'upload' | 'restore' | 'delete';
 
@@ -271,6 +272,7 @@ function CloudSyncConfirmation({
         aria-labelledby="cloud-confirm-title"
         aria-describedby="cloud-confirm-desc"
         onKeyDown={(event) => {
+          if (isImeCompositionEvent(event)) return;
           if (event.key === 'Escape') {
             event.preventDefault();
             event.stopPropagation();
