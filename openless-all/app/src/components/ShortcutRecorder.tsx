@@ -7,6 +7,7 @@ import { functionKeyPrimaryFromEvent } from '../lib/hotkeyRecorder';
 import { KbdGroup } from './Kbd';
 import { setShortcutRecordingActive, validateShortcutBinding } from '../lib/ipc';
 import type { ShortcutBinding } from '../lib/types';
+import { isImeCompositionEvent } from '../lib/imeKeyboard';
 
 /** 主行与「正在录入」面板切换时的水平滑动距离（px）。 */
 const SLIDE_DISTANCE = 48;
@@ -69,7 +70,7 @@ export function ShortcutRecorder({
   useEffect(() => {
     if (!menuOpen) return;
     const onKeyDown = (e: globalThis.KeyboardEvent) => {
-      if (e.key === 'Escape' && !e.isComposing) {
+      if (e.key === 'Escape' && !isImeCompositionEvent(e)) {
         e.preventDefault();
         e.stopPropagation();
         setMenuOpen(false);
