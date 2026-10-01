@@ -92,6 +92,7 @@ import { acceptQaSessionEvent, splitQaUserMessage } from '../lib/qaMessage';
 import type { QaChatMessage, QaStatePayload } from '../lib/types';
 import '../components/chat/chat.css';
 
+import { isImeCompositionEvent } from '../lib/imeKeyboard';
 const SELECTION_PREVIEW_MAX = 60;
 
 type Status = 'idle' | 'recording' | 'thinking' | 'error';
@@ -298,6 +299,7 @@ export function QaPanel({ embedded = false, onRequestClose }: QaPanelProps = {})
   // ── Esc 关闭 ────────────────────────────────────────────────────────
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (isImeCompositionEvent(event)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         void qaWindowDismiss();
