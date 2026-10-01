@@ -18,8 +18,6 @@ name: Release Tauri (cross-platform)
 
 on:
   push:
-    branches:
-      - beta
     tags:
       - 'v*-tauri'
   workflow_dispatch:
