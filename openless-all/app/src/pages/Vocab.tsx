@@ -29,6 +29,7 @@ import { useExitMount } from '../lib/useExitMount';
 import { useOverlayMotion } from '../lib/motion';
 import { useMobileLayout } from '../lib/useMobileLayout';
 import { Btn, Card, Collapsible, PageHeader } from './_atoms';
+import { isImeCompositionEvent } from '../lib/imeKeyboard';
 
 const NEW_PRESET_DRAFT_ID = '__new__';
 
@@ -525,6 +526,7 @@ export function Vocab() {
               if (!query) setSearchOpen(false);
             }}
             onKeyDown={(e) => {
+              if (isImeCompositionEvent(e)) return;
               if (e.key === 'Escape') {
                 setQuery('');
                 setSearchOpen(false);
@@ -1031,6 +1033,7 @@ function ModalShell({ title, desc, closing = false, onClose, children }: ModalSh
   useOverlayMotion(cardRef, closing);
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (isImeCompositionEvent(e)) return;
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKeyDown, true);
