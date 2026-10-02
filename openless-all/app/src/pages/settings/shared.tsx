@@ -275,6 +275,7 @@ export const inputStyle: CSSProperties = {
 // are only for localization fallback; protocol notes belong near Core provider_rules.
 export const ASR_LABELS = [
   { id: 'volcengine', nameKey: 'asrVolcengine' },
+  { id: 'soniox', nameKey: 'asrSoniox' },
   { id: 'elevenlabs', nameKey: 'asrElevenLabs' },
   { id: 'bailian', nameKey: 'asrBailian' },
   { id: 'bailian-qwen3-realtime', nameKey: 'asrBailianQwen3' },
