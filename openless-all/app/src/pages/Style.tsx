@@ -29,6 +29,7 @@ import { getStylePackPresentation } from '../lib/stylePackPresentation';
 import { SavedToast, type SaveToastState } from '../components/SavedToast';
 import { pickStylePackZipTargetPath, stylePackZipFileName } from '../lib/stylePackZip';
 import { useMobileLayout, useLayoutStack, useConservativeLayout } from '../lib/useMobileLayout';
+import { isImeCompositionEvent } from '../lib/imeKeyboard';
 
 type BusyAction =
   | 'loading'
@@ -372,6 +373,7 @@ export function Style() {
   useEffect(() => {
     if (!editorOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (isImeCompositionEvent(event)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         closeEditor();
