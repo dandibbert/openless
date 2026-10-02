@@ -9,6 +9,7 @@ import { useHotkeySettings } from '../../state/HotkeySettingsContext';
 import { marketplaceAuthStatus } from '../../lib/ipc';
 import { isTauri } from '../../lib/ipc/shared';
 import {
+import { isImeCompositionEvent } from '../../lib/imeKeyboard';
   CLOUD_SYNC_E2EE_CONSENT_VERSION as CONSENT_VERSION,
   cloudSyncE2eeStatus,
   cloudSyncE2eePrepareEnable,
@@ -1312,6 +1313,7 @@ function SyncDialog({
         aria-labelledby={titleId}
         style={{ display: 'grid', gap: 18, outline: 'none', fontSize: 13, lineHeight: 1.65 }}
         onKeyDown={(event) => {
+          if (isImeCompositionEvent(event)) return;
           if (event.key === 'Escape') {
             event.preventDefault();
             event.stopPropagation();
