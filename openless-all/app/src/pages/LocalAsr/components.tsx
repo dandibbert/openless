@@ -18,6 +18,7 @@ import { formatBytes } from './helpers';
 import type { RemoteSize } from './types';
 import { useLayoutStack } from '../../lib/useMobileLayout';
 import './local-asr.css';
+import { isImeCompositionEvent } from '../../lib/imeKeyboard';
 
 export function FoundryPrepareProgressBlock({
   progress,
@@ -853,6 +854,7 @@ export function DownloadDialog({
         aria-describedby={descriptionId}
         className={`ol-model-dialog${stackLayout ? ' is-stacked' : ''}`}
         onKeyDown={(event) => {
+          if (isImeCompositionEvent(event)) return;
           if (event.key === 'Escape') {
             event.stopPropagation();
             onClose();
