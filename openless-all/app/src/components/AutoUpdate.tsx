@@ -32,7 +32,7 @@ const UPDATE_CHECK_TIMEOUT_MS = 15_000;
 
 // Manual-download fallback when auto-update fails: straight to GitHub Releases
 // (same as the About page's RELEASE_NOTES_URL).
-const RELEASE_DOWNLOAD_URL = 'https://github.com/Open-Less/openless/releases';
+const RELEASE_DOWNLOAD_URL = 'https://github.com/dandibbert/openless/releases';
 
 export type UpdateStatus =
   | 'idle'
