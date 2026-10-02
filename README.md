@@ -24,9 +24,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/dandibbert/openless/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/dandibbert/openless?style=flat-square&color=2c5282" /></a>
-  <a href="https://github.com/Open-Less/openless/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/Open-Less/openless?style=flat-square&color=2f855a" /></a>
-  <a href="https://github.com/Open-Less/openless/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Open-Less/openless?style=flat-square&color=805ad5" /></a>
+  <a href="https://github.com/dandibbert/openless/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/Open-Less/openless?style=flat-square&color=2c5282" /></a>
+  <a href="https://github.com/dandibbert/openless/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/Open-Less/openless?style=flat-square&color=2f855a" /></a>
+  <a href="https://github.com/dandibbert/openless/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Open-Less/openless?style=flat-square&color=805ad5" /></a>
   <a href="https://discord.gg/vTZHTFGFm"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
 </p>
 
@@ -207,22 +207,22 @@ Every item below is one more layer sedimented into a default — a capability yo
 - **Toggle and push-to-talk** recording modes, plus a **MediaPlayPause trigger** so wired-earbud inline controls can start and stop recording. `Esc` cancels at any phase, including polish and insertion.
 - **Cloud ASR**: Volcengine streaming ASR (bigasr), Tencent Cloud Hunyuan realtime ASR (Hy-ASR), iFlytek realtime ASR (RTASR), Alibaba Cloud Bailian (classic realtime / Qwen3 realtime / Fun-ASR-Flash file transcription), StepFun StepAudio (batch + realtime), Zhipu GLM-ASR, Xiaomi MiMo ASR, OrcaRouter audio-input Gemini, ElevenLabs Scribe, OpenAI-compatible batch transcription (OpenAI Whisper / Groq / SiliconFlow SenseVoice / OpenRouter / ZenMux), and Apple Speech (macOS).
 - **Local ASR**: bundled Qwen3-ASR (0.6B / 1.7B) via vendored `Open-Less/qwen-asr` (macOS); Windows Foundry Local Whisper and sherpa-onnx (experimental) variants.
-- **Polish providers**: Ark (Volcengine), DeepSeek, OpenAI, Google Gemini, Codex OAuth, SiliconFlow, Atlas Cloud, Xiaomi MiMo, Tencent Cloud TokenHub, CometAPI, OpenRouter, OrcaRouter, Alibaba Cloud Coding Plan, CodingPlanX, MiniMax, StepFun, and OpenCode Zen — plus any OpenAI-compatible endpoint you bring.
-- **Four output modes**: raw, light polish, structured (**AI-prompt mode**), and formal. Plus a **translation hotkey** that converts speech directly into the configured target language ([#43](../../issues/43)).
-- **Selection-ask QA panel** — a separate hotkey opens a floating panel that runs voice Q&A against the highlighted text in any app ([#118](../../issues/118)).
+- **Polish providers**: Ark (Volcengine), DeepSeek, OpenAI, Google Gemini, Codex OAuth, SiliconFlow, Atlas Cloud, Xiaomi MiMo, Tencent Cloud TokenHub, CometAPI, OpenRouter, Requesty, API Route, OrcaRouter, Alibaba Cloud Coding Plan, CodingPlanX, MiniMax, StepFun, and OpenCode Zen — plus any OpenAI-compatible endpoint you bring.
+- **Four output modes**: raw, light polish, structured (**AI-prompt mode**), and formal. Plus a **translation hotkey** that converts speech directly into the configured target language ([#43](https://github.com/dandibbert/openless/issues/43)).
+- **Selection-ask QA panel** — a separate hotkey opens a floating panel that runs voice Q&A against the highlighted text in any app ([#118](https://github.com/dandibbert/openless/issues/118)).
 - **Main window**: Overview / History / Vocab / Style / Marketplace / Settings. Persistent tray icon, plus a mini status capsule that floats on screen and follows the display you are typing on (multi-monitor).
 - **Local model management** — manage on-disk local-ASR model storage from Settings.
 - **Multilingual UI** — Settings → Language switches between 简体中文 / 繁體中文 / English / 日本語 / 한국어 (auto-detected on first launch).
-- **In-app auto-update on the Tauri hosts** — Settings → About → Check; signed updater artifacts via the Tauri updater plugin on macOS, Windows, and Android. Linux has an independent manifest and updater contract.
-- **Beta channel (opt-in)** — Settings → About → Join Beta channel exposes the latest pre-release build for manual download. Beta releases never reach Stable users automatically (see [Contributing workflow](#contributing-workflow)).
-- **Distribution channels** — direct DMG/EXE from [Releases](../../releases), Homebrew Cask (`brew install --cask openless`), and a Windows installer. Linux packages are not published until the separate egui UI is complete and its release gate is enabled.
+- **In-app auto-update on the Tauri hosts** — Settings → About → Check; signed updater artifacts via the Tauri updater plugin on macOS, Windows, and Android. Linux deb/rpm packages have no in-app updater or AppImage manifest.
+- **Beta channel (opt-in)** — Settings → About & updates → Join Beta channel selects the Beta updater feed; packages are also available from Releases. Beta releases never reach Stable users automatically (see [Contributing workflow](#contributing-workflow)).
+- **Distribution channels** — direct DMG/EXE from [Releases](https://github.com/dandibbert/openless/releases), Homebrew Cask (add the project tap first; see installation below), and a Windows installer. Linux deb/rpm packages require independent device acceptance and an explicit administrator upload to an existing Release.
 - **Single-instance lock** — prevents two OpenLess processes from racing the same hotkey edge.
 - Dictionary entries are injected as Volcengine ASR `context.hotwords` and as semantic hints during polish; hits accumulate per session.
 - Platform-native global hotkey: CGEventTap on macOS, low-level keyboard hook (`WH_KEYBOARD_LL`) on Windows.
 
 ## Download & install (end users)
 
-Go to [Releases](../../releases) and download:
+Go to [Releases](https://github.com/dandibbert/openless/releases) and download:
 
 - **macOS**: `OpenLess_<version>_aarch64.dmg` (Apple Silicon) or `OpenLess_<version>_x64.dmg` (Intel). Open it, drag the app to `/Applications`, **then run the following once in Terminal to bypass the Gatekeeper "damaged" warning** (the build is ad-hoc signed, not Apple-notarized):
   ```bash
@@ -237,10 +237,10 @@ Go to [Releases](../../releases) and download:
   - In-app updates (Settings → About) use `latest-android-{arch}.json` manifests; Beta users join Beta in Advanced settings.
   - Debug smoke builds: `OpenLess-android-debug-{abi}-*.apk` from workflow_dispatch artifacts.
   - If unsure, run `adb shell getprop ro.product.cpu.abi` and pick the matching APK.
-- **Linux**: the Tauri/WebView build has been retired. `linux-egui` now contains a native `eframe` UI backed by the shared Core 2.0 services. Production release still requires Linux CI artifacts plus real Ubuntu audio, focus/input, install, upgrade, and rollback evidence.
+- **Linux**: the Tauri/WebView build has been retired. The native `eframe` host uses the shared Core 2.0 services. After CI and real Ubuntu audio, input, install, upgrade and rollback acceptance, the shared release includes deb/rpm packages and `SHA256SUMS`. Linux requires glibc ≥ 2.39 (Ubuntu 24.04 or a comparable distribution); there is no AppImage or in-app updater.
 - **macOS (Homebrew)**:
   ```bash
-  brew tap Open-Less/openless https://github.com/Open-Less/openless
+  brew tap Open-Less/openless https://github.com/dandibbert/openless
   brew install --cask openless
   xattr -cr /Applications/OpenLess.app
 
@@ -267,7 +267,7 @@ For the full end-user walkthrough, see [USAGE.md](USAGE.md).
 
 The active workspace lives in `openless-all/app/`. `crates/openless-core` is the framework-independent backend, `src-tauri` hosts macOS/Windows/Android, and `linux-egui` contains the native Linux UI and its platform adapters. Initialize submodules before a Tauri source build: its manifest resolves local path dependencies even when their target-specific code is not compiled. These include macOS ASR engines such as [`Open-Less/qwen-asr`](https://github.com/Open-Less/qwen-asr) under `src-tauri/vendor/`. The root Core/Linux workspace excludes `src-tauri`, so its independent checks do not parse the Tauri manifest or require those submodules. Start with the [documentation index](docs/index.md), [architecture](docs/architecture.md), and [source structure](docs/structure.md).
 
-Rust 1.88 is the minimum supported toolchain for source builds; the latest stable Rust is recommended. CI verifies both Rust 1.88 and stable on macOS, Windows, and Linux.
+Rust 1.88 is the minimum supported toolchain for the desktop application sources (`openless-core`, `src-tauri`); the latest stable Rust is recommended. CI verifies both Rust 1.88 and stable on macOS and Windows; the Linux egui host requires Rust 1.95 and is verified on stable.
 
 On Apple Silicon, compiling the optional Qwen3-ASR MLX backend requires Xcode's MetalToolchain component. Install it with `xcodebuild -downloadComponent MetalToolchain` and verify it with `xcrun --find metal`. This is a source-build dependency; packaged OpenLess applications do not require it at runtime.
 
@@ -373,16 +373,16 @@ The dictionary handles your proper nouns, product names, names of people, and ne
 - Manually adding the correct spelling, a category, and notes. You do not need to maintain misspellings or context hints.
 - Enabled entries are sent to the ASR provider that supports hotwords (Volcengine `context.hotwords`, StepFun `hotwords`, Whisper-compatible `prompt` — except ZenMux, whose JSON protocol does not carry `prompt`/`hotwords`, Bailian vocabulary ID) so they are recognized correctly during transcription. iFlytek realtime ASR has no request-level hotword parameter — configure personalized hotwords in the iFlytek console instead.
 - Entries are also injected into the polish prompt: the model decides per sentence whether to substitute. If "Cloud" clearly refers to the AI product `Claude` in context, it is corrected; if it genuinely means cloud computing, it is left as is.
-- **The dictionary learns from you.** When you hand-correct a word OpenLess just typed, a card appears asking whether to remember it. One ✓ and it is in — no settings page, no forms. Every suggestion is reviewed by you: nothing is ever added silently. Requires the opt-in **cursor context** setting below, and is macOS-only for now.
+- **Learn from corrections (experimental).** Open Settings → Experiments & extensions → Learn from corrections to enable it and configure observation duration (10–60 seconds, default 60), suggestion duration (5–60 seconds, default 10), and maximum automatic phrase length (2–32 characters, default 12). It defaults to off and is not enabled by cursor context or cloud sync. On macOS, Windows and Android, supported editors can be observed after insertion. Suggestions require confirmation before expiry to enter the dictionary. Changing parameters stops the current observation and clears pending suggestions; new values apply to the next dictation. Android requires accessibility. When observation is unavailable, use **Remember a word** in history details; Android IME result editing also offers an unchecked dictionary option. Every path requires explicit confirmation and does not create global replacement rules.
 - **Entries that earn their keep get priority.** The hotword budget sent to ASR providers is finite (a few hundred characters). Entries are ranked by hit count, with a few reserved seats for words you just added by hand, so the terms you actually use keep their place instead of being pushed out by whatever you added most recently.
 
 ### Cursor context (opt-in, macOS)
 
 Settings → Privacy → Data storage → **Cursor context**. Off by default.
 
-When on, each dictation reads a few hundred characters around your cursor **in the app you are writing in** and sends them with the polish request, so the model knows what you are writing about. Chinese homophones (接口/借口, 大鱼/大禹) are indistinguishable to an acoustic model but obvious from context. This is also what makes dictionary learning possible: OpenLess can only notice that you fixed a word if it can see the text it just typed.
+When on, each dictation reads a few hundred characters around your cursor **in the app you are writing in** and sends them with the polish request, so the model knows what you are writing about. Chinese homophones (接口/借口, 大鱼/大禹) are indistinguishable to an acoustic model but obvious from context. Local vocabulary learning has a separate switch and does not require cursor context. Observed text is not sent to a model; words explicitly added to the dictionary participate in future ASR and polish requests as described above.
 
-What it never reads: password fields, macOS Secure Input, password managers, and terminals — those are blocked before a single accessibility call is made. While the setting is off, no accessibility calls happen at all and the prompt is byte-for-byte identical to a build without the feature.
+Cursor context excludes password fields, macOS Secure Input, known password managers and terminals. Turning it off stops reading cursor context for polishing; other authorized accessibility features, including local vocabulary learning and insertion, work independently. Turning vocabulary learning off stops observation and clears pending suggestions.
 
 The main window is organized as Home / History / Dictionary / Settings. The Dictionary tab opens a separate editor window when you click "New". The Home tab shows total dictation time, total characters, average characters per minute, estimated time saved, and dictionary participation statistics.
 
@@ -398,48 +398,24 @@ egui UI  ── Linux Adapter (no Tauri/WebKitGTK) ────┘
 
 `openless-core` owns the stable DTOs, errors, semantic events, repositories, credentials contract, and host-facing use-case Interface. Host-only concerns—IPC, windows, tray, permissions, updater, keyring, fcitx5, and package resource paths—are implemented by Adapters. Legacy React command/event names stay in the Tauri compatibility Adapter; Linux calls the typed Rust Interface in process. See [`docs/linux-egui-backend-contract.md`](docs/linux-egui-backend-contract.md).
 
-The `v<version>-tauri` / `v<version>-Beta.N-tauri` workflows publish the macOS, Windows, and Android hosts. Linux deb/rpm/AppImage assets are built by `release-linux-egui.yml` with an independent manifest; automatic release remains gated on successful artifacts and real Ubuntu install/runtime/upgrade/rollback evidence.
+The `v<version>-tauri` / `v<version>-Beta.N-tauri` workflows build the macOS, Windows and Android hosts alongside the independent Linux egui deb/rpm workflow. After Linux device acceptance and an admin's tag, verified Linux packages attach to the shared Release; Beta assets remain in a draft until an admin publishes them. Linux has no AppImage or in-app updater manifest.
 
 The dictation pipeline: `hotkey edge → Recorder.start + ASR.openSession → [audio frames] → hotkey edge → Recorder.stop + ASR.sendLastFrame → Polish → Insert → History.save`.
 
-See [AGENTS.md](AGENTS.md) for repository rules and [Architecture](docs/architecture.md) for module responsibilities and wiring.
+See [Contributing workflow](#contributing-workflow) and [Releasing](RELEASING.md) for contribution and release rules, and [Architecture](docs/architecture.md) for module responsibilities and wiring.
 
 ## Roadmap
 
 Planned but not yet shipped:
 
-- Cross-session style memory: polish learns the user's tone over time ([#46](../../issues/46)).
+- Cross-session style memory: polish learns the user's tone over time ([#46](https://github.com/dandibbert/openless/issues/46)).
 - Snippets (no UI or trigger logic yet).
 - History enhancements: copy button, search, re-polish, re-insert.
 - A "Paste last result" hotkey.
 
 ## Maintainer release checklist
 
-OpenLess ships two release channels. The branch name equals the channel name (see [Contributing workflow](#contributing-workflow)).
-
-### Common prep (both channels)
-
-- Bump the Tauri application version in **all five** locations: `package.json`, `package-lock.json` (root + nested entry under `packages.""`), `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and `src-tauri/Cargo.lock` (look for the `name = "openless"` block). CI's `Verify version sync` step will otherwise fail the build. The root `Cargo.lock` belongs only to `openless-core` and `openless-linux-egui`.
-- Run `INSTALL=0 ./scripts/build-mac.sh` and confirm the `.app` launches.
-- Smoke-test on a clean machine: permission flow, hotkey, recording, ASR, polish, insertion, and clipboard fallback.
-- Confirm that `TAURI_SIGNING_PRIVATE_KEY` and (for macOS) the Apple signing/notarization secrets are set on the repo.
-
-### Beta channel — `v<v>-beta-tauri`
-
-1. Land changes onto the `beta` branch via PR review.
-2. Push the tag **on `beta`**: `git tag v<v>-beta-tauri && git push origin v<v>-beta-tauri`.
-3. CI tags the GitHub Release as `Pre-release` and uploads only `latest-{tgt}-{arch}-beta.json` updater manifests. The Stable users' `releases/latest` redirect is unaffected.
-4. Announce in the appropriate channel (issue thread, QQ group) that opt-in Beta users can grab it from Settings → About → Join Beta channel.
-
-### Stable channel — `v<v>-tauri`
-
-1. Merge `beta → main` after the Beta release has soaked sufficiently (or run a final two-platform smoke build directly).
-2. Push the tag **on `main`**: `git tag v<v>-tauri && git push origin v<v>-tauri`.
-3. CI publishes a normal GitHub Release and uploads `latest-{tgt}-{arch}.json` (no `-beta` suffix). All Stable users receive the update through the in-app updater.
-
-### Post-release verification (always run)
-
-Follow [RELEASING.md](RELEASING.md) and verify the release page's pre-release flag, asset-filename channel correctness, Stable user flow, Beta opt-in flow, and raw update endpoints.
+[RELEASING.md](RELEASING.md) is the canonical release procedure, including administrator authority, version synchronization, platform acceptance, draft assets, signing, and updater verification. New Beta tags use `v<X.Y.Z>-Beta.<N>-tauri`; the historical `-beta-tauri` suffix is compatibility-only.
 
 ## Acknowledgements
 

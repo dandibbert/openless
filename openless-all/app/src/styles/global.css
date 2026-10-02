@@ -160,6 +160,17 @@ a {
   }
 }
 
+@keyframes ol-modal-card-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+
 /* 设置弹窗切换 tab 时右侧内容的轻微淡入。 */
 @keyframes ol-tab-fade {
   from {
@@ -442,9 +453,6 @@ html[data-ol-conservative-layout='true'] .ol-conservative-scope .ol-select-lite-
 .ol-advanced-settings-detail[hidden] {
   display: none;
 }
-.ol-advanced-settings-detail:not([hidden]) {
-  animation: ol-settings-detail-in 200ms var(--ol-motion-soft) both;
-}
 @keyframes ol-settings-detail-in {
   from {
     opacity: 0;
@@ -482,6 +490,9 @@ html[data-ol-conservative-layout='true'] .ol-conservative-scope .ol-select-lite-
   transition:
     color 0.16s var(--ol-motion-quick),
     background 0.16s var(--ol-motion-quick);
+}
+.ol-settings-rail-thumb {
+  transition: transform 240ms var(--ol-motion-spring);
 }
 .ol-settings-rail-btn:not([aria-current='page']):hover {
   background: var(--ol-nav-hover-bg);
@@ -719,7 +730,15 @@ html[data-ol-conservative-layout='true'] .ol-conservative-scope .ol-select-lite-
   border-color: var(--ol-line-strong);
 }
 .ol-word-card[data-disabled='true'] {
-  opacity: 0.55;
+  background: var(--ol-surface-2);
+}
+.ol-word-card[data-disabled='true'] .ol-word-card-text {
+  color: var(--ol-ink-2);
+}
+.ol-word-card-state {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--ol-ink-2);
 }
 .ol-word-card-icon {
   flex-shrink: 0;
@@ -788,36 +807,133 @@ html[data-ol-conservative-layout='true'] .ol-conservative-scope .ol-select-lite-
   color: var(--ol-ink);
 }
 
+.ol-service-pipeline-mode {
+  padding: 4px 0;
+}
+
+.ol-services-page {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.ol-service-pipeline-row {
+  padding-top: 4px !important;
+  padding-bottom: 4px !important;
+}
+
+.ol-service-pipeline-hint {
+  margin: 7px 0 0;
+  color: var(--ol-ink-4);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.ol-service-pipeline-option {
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ol-ink-3);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    color 140ms var(--ol-motion-quick),
+    background 140ms var(--ol-motion-quick);
+}
+
+.ol-service-pipeline-option[aria-pressed='true'] {
+  background: transparent;
+  color: var(--ol-ink);
+  box-shadow: none;
+}
+
+.ol-service-pipeline-track {
+  position: relative;
+  isolation: isolate;
+}
+.ol-service-pipeline-option {
+  position: relative;
+  z-index: 1;
+}
+.ol-service-pipeline-indicator,
+.ol-service-view-indicator {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100px;
+  transform-origin: left top;
+  visibility: hidden;
+  pointer-events: none;
+}
+.ol-service-pipeline-indicator {
+  background: var(--ol-segmented-active-bg);
+  box-shadow: var(--ol-segmented-active-shadow);
+  border-radius: 6px;
+  z-index: 0;
+}
+.ol-service-view-indicator {
+  background: var(--ol-blue);
+  border-radius: 2px;
+  z-index: 1;
+}
+
+.ol-service-pipeline-option:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ol-service-pipeline-option:focus-visible {
+  outline: 2px solid var(--ol-blue);
+}
+
 .ol-service-views {
   position: sticky;
   top: 0;
   z-index: 2;
   background: var(--ol-settings-content-bg);
-  display: flex;
-  gap: 6px;
+  display: grid;
+  gap: 4px;
   flex-shrink: 0;
-  overflow-x: auto;
+  min-width: 0;
   border-bottom: 1px solid var(--ol-line);
   margin-bottom: 4px;
 }
 
 .ol-service-views > button {
-  flex-shrink: 0;
-  display: inline-flex;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 12px 14px;
+  justify-content: flex-start;
+  gap: 5px;
+  padding: 10px 4px;
+  min-height: 62px;
   border: 0;
   border-bottom: 2px solid transparent;
   background: transparent;
   font: inherit;
   font-size: 13px;
   font-weight: 500;
+  line-height: 1.35;
   color: var(--ol-ink-3);
   cursor: pointer;
+  transition:
+    color 140ms var(--ol-motion-quick),
+    border-color 140ms var(--ol-motion-quick);
 }
 
-/* 必配服务（语言模型/语音识别）tab 上的状态点：未配置红、已配置黄。 */
+.ol-service-view-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Active required services show whether an enabled channel is configured. */
 .ol-service-status-dot {
   width: 7px;
   height: 7px;
@@ -829,22 +945,39 @@ html[data-ol-conservative-layout='true'] .ol-conservative-scope .ol-select-lite-
   background: var(--ol-red, #ef4444);
 }
 .ol-service-status-dot[data-state='ok'] {
-  background: var(--ol-warn);
+  background: var(--ol-ok, #16a34a);
 }
 
 .ol-service-views > button[aria-pressed='true'] {
   color: var(--ol-blue);
-  border-bottom-color: var(--ol-blue);
+  border-bottom-color: transparent;
   font-weight: 650;
 }
 
-.ol-service-views > button:hover {
+.ol-service-views > button:hover:not(:disabled) {
   color: var(--ol-ink);
+}
+.ol-service-views > button:disabled {
+  color: var(--ol-ink-4);
+  cursor: not-allowed;
+  opacity: 1;
 }
 .ol-service-views > button:focus-visible {
   outline: 2px solid var(--ol-blue);
   outline-offset: -3px;
 }
+
+.ol-service-inactive-tag {
+  color: var(--ol-warn);
+  background: var(--ol-warn-soft);
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .ol-service-content {
   display: flex;
   flex-direction: column;
@@ -856,6 +989,88 @@ html[data-ol-conservative-layout='true'] .ol-conservative-scope .ol-select-lite-
   font-size: 12px;
   line-height: 1.6;
   color: var(--ol-ink-3);
+}
+
+.ol-omni-primary-fields,
+.ol-omni-advanced-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+}
+.ol-omni-primary-fields .ol-channel-form-row,
+.ol-omni-advanced-fields .ol-channel-form-row {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+.ol-omni-primary-fields .ol-channel-form-row > label,
+.ol-omni-advanced-fields .ol-channel-form-row > label {
+  padding-top: 0;
+}
+.ol-omni-settings .ol-channel-form-row {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+.ol-omni-tools {
+  border-top: 1px solid var(--ol-line);
+  margin-top: 10px;
+  padding-top: 10px;
+}
+.ol-omni-tools-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ol-omni-tools-hint {
+  margin: 8px 0 0;
+  color: var(--ol-ink-3);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.ol-service-inactive-tag,
+.ol-provider-result,
+.ol-channel-model-tools[data-populated='true'] {
+  animation: ol-feedback-in 200ms var(--ol-motion-spring) both;
+}
+@keyframes ol-feedback-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 3px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.ol-service-views > button,
+.ol-service-pipeline-option,
+.ol-omni-tools-actions > button {
+  transition:
+    color 140ms var(--ol-motion-quick),
+    background 140ms var(--ol-motion-quick),
+    transform 140ms var(--ol-motion-quick);
+}
+.ol-service-views > button:active:not(:disabled),
+.ol-service-pipeline-option:active:not(:disabled),
+.ol-omni-tools-actions > button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+@media (max-width: 720px) {
+  .ol-service-views {
+    gap: 2px;
+  }
+  .ol-service-views > button {
+    font-size: 11px;
+    padding-inline: 2px;
+  }
+  .ol-service-inactive-tag {
+    font-size: 8px;
+  }
+  .ol-omni-primary-fields,
+  .ol-omni-advanced-fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
 }
 
 .ol-settings-surface[data-ol-mobile='true'] {
@@ -969,10 +1184,6 @@ html[data-ol-platform='android'] .ol-capsule-pill {
   width: 100%;
   height: 100%;
   background: var(--ol-sidebar-bg);
-  animation: ol-settings-detail-in 200ms var(--ol-motion-soft) both;
-}
-.ol-channel-dialog-embedded[data-closing='true'] {
-  animation: ol-channel-detail-out 180ms var(--ol-motion-soft) both;
 }
 .ol-channel-dialog-embedded .ol-channel-dialog-header {
   padding: 18px 24px;
@@ -1417,6 +1628,10 @@ html[data-ol-platform='android'] .ol-capsule-pill {
   cursor: pointer;
   flex-shrink: 0;
 }
+.ol-word-card:not([data-selecting='true']) .ol-word-card-select,
+.ol-vocab-select-all[hidden] {
+  display: none;
+}
 .ol-word-card-select {
   margin: 0 0 0 8px;
 }
@@ -1493,11 +1708,15 @@ html:lang(de) {
 .ol-language-option {
   unicode-bidi: isolate;
 }
+.ol-cloud-sync {
+  display: grid;
+  gap: 16px;
+}
 .ol-cloud-sync header {
   display: flex;
   gap: 12px;
   align-items: flex-start;
-  margin-bottom: 18px;
+  margin-bottom: 0;
 }
 .ol-cloud-sync header > div {
   flex: 1;
@@ -1513,7 +1732,10 @@ html:lang(de) {
   line-height: 1.65;
   color: var(--ol-ink-3);
   overflow-wrap: anywhere;
-  margin: 6px 0 12px;
+  margin: 0;
+}
+.ol-cloud-sync header p {
+  margin-top: 8px;
 }
 .ol-cloud-sync-icon {
   display: grid;
@@ -1533,17 +1755,29 @@ html:lang(de) {
   font-size: 13px;
 }
 .ol-cloud-sync-account strong {
-  margin-left: auto;
+  overflow-wrap: anywhere;
 }
 .ol-cloud-sync-backup {
-  margin: 14px 0;
+  margin: 0;
   padding: 14px;
   border-radius: 12px;
   background: var(--ol-surface-2);
   font-size: 13px;
 }
 .ol-cloud-sync-backup small {
-  color: var(--ol-ink-3);
+  color: var(--ol-ink-2);
+}
+.ol-cloud-sync-status-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+.ol-cloud-sync-status-line > span,
+.ol-cloud-sync-status-line > p {
+  margin: 0;
+  min-width: 0;
 }
 .ol-cloud-sync-actions {
   display: flex;
@@ -1555,6 +1789,27 @@ html:lang(de) {
   color: var(--ol-err);
 }
 .ol-cloud-sync .ol-cloud-sync-scope {
-  margin: 14px 0 0;
+  margin: 0;
   font-size: 12px;
+}
+
+.ol-loading-spinner {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--ol-blue);
+  animation: ol-spin 900ms linear infinite;
+}
+
+/* Retain final states and completion events while removing decorative motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
 }

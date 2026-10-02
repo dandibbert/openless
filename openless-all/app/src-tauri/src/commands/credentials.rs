@@ -104,6 +104,82 @@ pub(crate) fn active_sherpa_asr_is_supported(provider: &str) -> bool {
 }
 
 impl openless_core::CredentialStore for SystemCredentialStore {
+    fn bind_sync_gate(
+        &self,
+        gate: std::sync::Arc<openless_core::credentials::SyncWriteGate>,
+    ) -> Result<(), openless_core::BackendError> {
+        CredentialsVault::bind_sync_gate(gate).map_err(credential_persistence_error)
+    }
+
+    fn export_sync_credentials_readonly(
+        &self,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<openless_core::credentials::SyncCredentials, openless_core::BackendError>,
+    > {
+        run_credential_task(|| {
+            CredentialsVault::export_sync_credentials_readonly()
+                .map_err(credential_persistence_error)
+        })
+    }
+
+    fn export_sync_credentials(
+        &self,
+        permit: &openless_core::credentials::ExclusivePermit,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<openless_core::credentials::SyncCredentials, openless_core::BackendError>,
+    > {
+        let permit = permit.clone();
+        run_credential_task(move || {
+            CredentialsVault::export_sync_credentials(&permit).map_err(credential_persistence_error)
+        })
+    }
+
+    fn replace_sync_credentials(
+        &self,
+        snapshot: openless_core::credentials::SyncCredentials,
+        permit: &openless_core::credentials::ExclusivePermit,
+    ) -> futures_util::future::BoxFuture<'static, Result<(), openless_core::BackendError>> {
+        let permit = permit.clone();
+        run_credential_task(move || {
+            CredentialsVault::replace_sync_credentials(&snapshot, &permit)
+                .map_err(credential_persistence_error)
+        })
+    }
+
+    fn read_sync_secret(
+        &self,
+        account: openless_core::credentials::SyncSecretAccount,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<Option<openless_core::SecretValue>, openless_core::BackendError>,
+    > {
+        run_credential_task(move || {
+            CredentialsVault::read_sync_secret(&account).map_err(credential_persistence_error)
+        })
+    }
+
+    fn write_sync_secret(
+        &self,
+        account: openless_core::credentials::SyncSecretAccount,
+        value: openless_core::SecretValue,
+    ) -> futures_util::future::BoxFuture<'static, Result<(), openless_core::BackendError>> {
+        run_credential_task(move || {
+            CredentialsVault::write_sync_secret(&account, &value)
+                .map_err(credential_persistence_error)
+        })
+    }
+
+    fn remove_sync_secret(
+        &self,
+        account: openless_core::credentials::SyncSecretAccount,
+    ) -> futures_util::future::BoxFuture<'static, Result<(), openless_core::BackendError>> {
+        run_credential_task(move || {
+            CredentialsVault::remove_sync_secret(&account).map_err(credential_persistence_error)
+        })
+    }
+
     fn status(
         &self,
         preferences: UserPreferences,
@@ -192,10 +268,10 @@ fn run_credential_task<T: Send + 'static>(
     Box::pin(async move {
         tauri::async_runtime::spawn_blocking(task)
             .await
-            .map_err(|error| {
+            .map_err(|_| {
                 openless_core::BackendError::new(
                     openless_core::BackendErrorCode::Internal,
-                    format!("credential worker failed: {error}"),
+                    "credential worker failed",
                 )
             })?
     })
@@ -420,10 +496,18 @@ fn invalid_credential_key(key: &openless_core::CredentialKey) -> openless_core::
 }
 
 fn credential_persistence_error(error: anyhow::Error) -> openless_core::BackendError {
-    openless_core::BackendError::new(
-        openless_core::BackendErrorCode::Persistence,
-        format!("credential vault operation failed: {error:#}"),
-    )
+    if let Some(error) = error.downcast_ref::<openless_core::BackendError>() {
+        return error.clone();
+    }
+    let code = if matches!(
+        error.downcast_ref::<crate::persistence::VaultCommitFailure>(),
+        Some(crate::persistence::VaultCommitFailure::Unknown)
+    ) {
+        openless_core::BackendErrorCode::OutcomeUnknown
+    } else {
+        openless_core::BackendErrorCode::Persistence
+    };
+    openless_core::BackendError::new(code, "credential vault operation failed")
 }
 
 fn require_readable_vault() -> Result<(), openless_core::BackendError> {
@@ -502,11 +586,11 @@ fn local_asr_configured(
         }
     }
     if crate::asr::local::is_local_qwen3(provider) {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(target_os = "macos")]
         {
             return Some(crate::asr::local::qwen_backend_for_provider(provider).is_some());
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(target_os = "macos"))]
         {
             return Some(false);
         }
@@ -541,8 +625,9 @@ fn configured(field: &Option<String>) -> bool {
         .unwrap_or(false)
 }
 
-/// 多模态（Omni）模型是否已配置：OpenAI 兼容通道要求 API Key + Base URL + Model；
-/// Gemini 通道要求 API Key + Model（Base URL 为空时后端走官方默认）。
+/// Whether the multimodal (Omni) model is configured: the OpenAI-compatible channel requires
+/// API Key + Base URL + Model; the Gemini channel requires API Key + Model (empty Base URL falls
+/// back to the backend's official default).
 pub(crate) fn omni_configured_for_active_provider(snap: &CredentialsSnapshot) -> bool {
     openless_core::provider_rules::omni_configured(
         &snap.active_omni_provider,
@@ -766,8 +851,9 @@ pub async fn set_active_omni_provider(core: CoreState<'_>, provider: String) -> 
         .map_err(|error| error.to_string())
 }
 
-/// 读出某个账号的实际值（用于设置页预填表单）。
-/// 凭据来自系统凭据库；只允许主设置窗口读取 raw secret，避免胶囊 / QA 等辅助窗口默认暴露。
+/// Read an account's actual value (used to pre-fill settings forms).
+/// Credentials come from the system keychain; only the main settings window may read raw secrets,
+/// keeping auxiliary windows (capsule / QA etc.) from exposing them by default.
 #[tauri::command]
 pub async fn read_credential(
     core: CoreState<'_>,
@@ -821,7 +907,8 @@ enum CredentialProviderKind {
     Omni,
 }
 
-/// 一个凭据账户所属的 provider map —— 决定显式 provider id 应路由到哪个命名空间。
+/// Which provider map a credential account belongs to — decides which namespace an explicit
+/// provider id routes to.
 fn account_provider_kind(account: CredentialAccount) -> CredentialProviderKind {
     match account {
         CredentialAccount::ArkApiKey
@@ -888,6 +975,43 @@ fn parse_account(s: &str) -> Result<CredentialAccount, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancelled_credential_worker_holds_restore_lease_until_it_finishes() {
+        let dir = std::env::temp_dir().join(format!(
+            "openless-credential-worker-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let gate =
+            openless_core::credentials::SyncWriteGate::open(dir.join("generation.json")).unwrap();
+        let original = gate.try_exclusive().unwrap();
+        let worker_lease = original.clone();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(run_credential_task(move || {
+            let _lease = worker_lease;
+            let _ = started_tx.send(());
+            finish_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            drop(_lease);
+            let _ = done_tx.send(());
+            Ok(())
+        }));
+        started_rx.await.unwrap();
+        drop(original);
+        task.abort();
+        let _ = task.await;
+        assert!(gate.begin_mutation().is_err());
+        assert!(gate.try_exclusive().is_err());
+        finish_tx.send(()).unwrap();
+        done_rx.await.unwrap();
+        let permit = gate.begin_mutation().unwrap();
+        permit.abort_unmodified().unwrap();
+        drop(gate);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn omni_credential_keys_preserve_the_explicit_provider_scope() {

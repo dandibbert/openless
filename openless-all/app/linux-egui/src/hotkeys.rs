@@ -15,6 +15,8 @@ static NEXT_PRESS_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 struct HotkeyPressIds {
     dictation: std::sync::atomic::AtomicU64,
     less_computer: std::sync::atomic::AtomicU64,
+    qa: std::sync::atomic::AtomicBool,
+    quick_note: std::sync::atomic::AtomicBool,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -62,8 +64,18 @@ pub enum LinuxHotkeyEvent {
         at: std::time::Instant,
     },
     QaPressed,
+    QuickNotePressed,
     SelectionPolishPressed,
-    TranslationPressed,
+    TranslationPressed {
+        symbol: u32,
+        states: u32,
+    },
+    SwitchStylePressed,
+    OpenAppPressed,
+    StylePackPressed {
+        symbol: u32,
+        states: u32,
+    },
 }
 
 pub struct Fcitx5HotkeyListener {
@@ -322,9 +334,41 @@ fn event_from_signal(
                 .load(std::sync::atomic::Ordering::Acquire),
             at,
         }),
-        ("QaShortcutEvent", true) => Some(LinuxHotkeyEvent::QaPressed),
+        ("QaShortcutEvent", true)
+            if !press_ids.qa.swap(true, std::sync::atomic::Ordering::AcqRel) =>
+        {
+            Some(LinuxHotkeyEvent::QaPressed)
+        }
+        ("QaShortcutEvent", true) => None,
+        ("QaShortcutEvent", false) => {
+            press_ids
+                .qa
+                .store(false, std::sync::atomic::Ordering::Release);
+            None
+        }
+        ("QuickNoteEvent", true)
+            if !press_ids
+                .quick_note
+                .swap(true, std::sync::atomic::Ordering::AcqRel) =>
+        {
+            Some(LinuxHotkeyEvent::QuickNotePressed)
+        }
+        ("QuickNoteEvent", true) => None,
+        ("QuickNoteEvent", false) => {
+            press_ids
+                .quick_note
+                .store(false, std::sync::atomic::Ordering::Release);
+            None
+        }
         ("SelectionPolishEvent", true) => Some(LinuxHotkeyEvent::SelectionPolishPressed),
-        ("TranslationModifierEvent", true) => Some(LinuxHotkeyEvent::TranslationPressed),
+        ("TranslationModifierEvent", true) => {
+            Some(LinuxHotkeyEvent::TranslationPressed { symbol, states })
+        }
+        ("SwitchStyleEvent", true) => Some(LinuxHotkeyEvent::SwitchStylePressed),
+        ("OpenAppEvent", true) => Some(LinuxHotkeyEvent::OpenAppPressed),
+        ("StylePackHotkeyEvent", true) => {
+            Some(LinuxHotkeyEvent::StylePackPressed { symbol, states })
+        }
         _ => None,
     }
 }
@@ -374,6 +418,21 @@ mod tests {
         assert_eq!(
             event_from_signal("QaShortcutEvent", 0, 0, true, at, &press_ids),
             Some(LinuxHotkeyEvent::QaPressed)
+        );
+        assert_eq!(
+            event_from_signal("SwitchStyleEvent", 11, 12, true, at, &press_ids),
+            Some(LinuxHotkeyEvent::SwitchStylePressed)
+        );
+        assert_eq!(
+            event_from_signal("OpenAppEvent", 13, 14, true, at, &press_ids),
+            Some(LinuxHotkeyEvent::OpenAppPressed)
+        );
+        assert_eq!(
+            event_from_signal("StylePackHotkeyEvent", 15, 16, true, at, &press_ids),
+            Some(LinuxHotkeyEvent::StylePackPressed {
+                symbol: 15,
+                states: 16,
+            })
         );
         let less_pressed = event_from_signal("LessComputerKeyEvent", 3, 4, true, at, &press_ids)
             .expect("Less Computer press");

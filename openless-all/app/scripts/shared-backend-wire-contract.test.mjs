@@ -178,7 +178,7 @@ assert.match(
 );
 assert.match(
   lessComputerPanel,
-  /reconciled\.reset\) \{\s*setTurns\(\[\]\);\s*setVoice\(null\)/,
+  /reconciled\.reset\) \{[^}]*?setTurns\(\[\]\);\s*setVoice\(null\)/,
   'a truncated replay must reset both the conversation and voice presentation',
 );
 
@@ -467,6 +467,36 @@ assert.match(
   'the QA adapter must expose the narrow opaque-target host seam',
 );
 
+const invokeHandlers = await read('src-tauri/src/lib.rs');
+const accessibilityVocabulary = await read('android/kotlin/OpenLessAccessibilityService.kt');
+const vocabularyReceiver = await read('android/kotlin/OpenLessVocabularyReceiver.kt');
+const androidManifestGenerator = await read('scripts/merge-android-overlay-manifest.mjs');
+assert.doesNotMatch(
+  accessibilityVocabulary,
+  /OpenLessNative\.native(?:Vocabulary|ObserveVocabulary|PendingVocabulary|ResolveVocabulary)/,
+  'the isolated accessibility process must never access main-process Core singletons',
+);
+assert.match(
+  vocabularyReceiver,
+  /OpenLessNative\.nativeObserveVocabularyText/,
+  'observation callbacks must reach the main-process Core receiver',
+);
+assert.match(
+  androidManifestGenerator,
+  /android:name="\.OpenLessVocabularyReceiver"\s+android:exported="false"/,
+  'vocabulary IPC must be private and run in the default main process',
+);
+for (const platform of ['desktop', 'mobile']) {
+  const macro = invokeHandlers
+    .split(`macro_rules! app_invoke_handler_${platform}`)[1]
+    ?.split('\n}')[0];
+  assert.match(
+    macro ?? '',
+    /commands::add_learned_vocab\s*,/,
+    `${platform} history must expose explicit vocabulary learning`,
+  );
+}
+
 for (const method of [
   'accept_pending_correction',
   'reject_pending_correction',
@@ -507,6 +537,29 @@ assert.doesNotMatch(
   coordinator,
   /pub fn less_computer_(?:window_dismiss|window_open|submit_text)\(/,
   'Coordinator must not own Less Computer command business or window wrappers',
+);
+for (const [command, args] of [
+  ['less_computer_voice_start', '{ mode }'],
+  ['less_computer_voice_stop', '{ sessionId }'],
+  ['less_computer_voice_cancel', '{ sessionId }'],
+  ['less_computer_task_cancel', 'undefined'],
+]) {
+  assert(lessComputerIpc.includes(`'${command}', ${args}`), `${command} wire drifted`);
+  assert.match(
+    qaCommand,
+    new RegExp(`pub (?:async )?fn ${command}\\([^]*?require_less_computer_window\\(&window\\)\\?`),
+    `${command} must only accept the Less Computer window`,
+  );
+}
+assert.match(
+  qaCommand,
+  /less_computer_voice_start\([^]*?mode: openless_core::LessComputerVoiceMode[^]*?start_less_computer_voice_from_panel\(mode\)/,
+  'panel voice must pass its delivery mode to the shared Host capture',
+);
+assert.match(
+  coordinator,
+  /start_less_computer_voice_from_panel\([^]*?publish_start_error: false/,
+  'panel voice start errors are returned to the composer, not posted into the conversation',
 );
 assert.match(
   stylePacksCommand,

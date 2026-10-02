@@ -11,8 +11,9 @@ const isMobileDev =
   process.env.TAURI_ENV_PLATFORM === 'android' || process.env.TAURI_ENV_PLATFORM === 'ios';
 
 export default defineConfig(async () => ({
-  // tailwindcss：只服务统一聊天面板的官方 shadcn 组件（components/chat/chat.css
-  // 入口，source 显式圈定 chat/ 与两个面板文件）；其余全局样式不走 tailwind。
+  // tailwindcss: serves only the official shadcn components of the unified chat panel
+  // (components/chat/chat.css entry; sources explicitly scoped to chat/ and the two panel
+  // files); all other global styles bypass tailwind.
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
@@ -29,7 +30,7 @@ export default defineConfig(async () => ({
       : host
         ? { protocol: 'ws', host, port: 1421 }
         : undefined,
-    watch: { ignored: ['**/src-tauri/**'] },
+    watch: { ignored: ['**/src-tauri/**', '**/target/**'] },
     proxy: {
       // Browser-only preview parity: the native app calls OrcaRouter directly,
       // while Vite needs a same-origin bridge because /models does not advertise CORS.

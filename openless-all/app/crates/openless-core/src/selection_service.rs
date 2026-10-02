@@ -55,6 +55,7 @@ struct SelectionServiceInner {
     activity: Arc<ActivityStore>,
     credential_store: Arc<dyn CredentialStore>,
     state: RwLock<SelectionState>,
+    runtime_work: Arc<crate::voice_session::RuntimeActivityGate>,
 }
 
 pub(crate) struct SelectionService {
@@ -97,12 +98,41 @@ impl SelectionService {
                 activity: dependencies.activity,
                 credential_store: dependencies.credential_store,
                 state: RwLock::new(SelectionState::default()),
+                runtime_work: Arc::new(crate::voice_session::RuntimeActivityGate::default()),
             }),
         }
     }
 }
 
 impl SelectionServiceInner {
+    fn begin_runtime_work(
+        &self,
+    ) -> Result<crate::voice_session::RuntimeActivityHold, BackendError> {
+        let state = self.state.write().expect("selection state lock poisoned");
+        if matches!(
+            state.snapshot.phase,
+            SelectionPhase::Capturing | SelectionPhase::Preview | SelectionPhase::Applying
+        ) || state.reverting
+        {
+            Ok(self.runtime_work.existing_work())
+        } else {
+            self.runtime_work.acquire()
+        }
+    }
+
+    async fn cancel_runtime_best_effort(&self, session_id: SessionId) {
+        let polisher = Arc::clone(&self.polisher);
+        let runtime = Arc::clone(&self.runtime);
+        let _ = self
+            .runtime_work
+            .cleanup(Box::pin(async move {
+                let _ = polisher.cancel(session_id).await;
+                let _ = runtime.cancel(session_id).await;
+                Ok(())
+            }))
+            .await;
+    }
+
     fn hide_preview(&self) {
         if let Err(error) = self.host_actions.request(HostAction::HideSelectionPreview) {
             log::warn!("failed to hide selection preview: {error}");
@@ -479,8 +509,15 @@ impl SelectionServiceInner {
 
     fn fail_if_active(&self, session_id: SessionId) -> bool {
         let mut state = self.state.write().expect("selection state lock poisoned");
+        // Settle only sessions still in progress: Cancelled means the user ended it;
+        // Completed means paste succeeded (race: the narrow window between the
+        // complete and fail checks — wrongly marking Failed would overwrite the
+        // success state).
         if state.snapshot.session_id == Some(session_id)
-            && !matches!(state.snapshot.phase, SelectionPhase::Cancelled)
+            && matches!(
+                state.snapshot.phase,
+                SelectionPhase::Capturing | SelectionPhase::Preview | SelectionPhase::Applying
+            )
         {
             state.snapshot.phase = SelectionPhase::Failed;
             let snapshot = state.snapshot.clone();
@@ -493,6 +530,39 @@ impl SelectionServiceInner {
         } else {
             false
         }
+    }
+
+    /// confirm-failure settlement: a dead session (stale / target changed / occupied
+    /// concurrently) settles to Failed and hides the preview; transient platform
+    /// errors (focus restore / target recheck jitter) fall back to Preview and stay
+    /// retryable — failing outright would hide the preview window, lose the edited
+    /// content, and leave the user with an unresponsive-looking confirm button.
+    fn settle_confirm_failure(&self, session_id: SessionId, error: &BackendError) -> bool {
+        let settled = matches!(
+            error.code,
+            BackendErrorCode::Cancelled
+                | BackendErrorCode::InvalidState
+                | BackendErrorCode::InvalidArgument
+                | BackendErrorCode::Busy
+        );
+        let mut state = self.state.write().expect("selection state lock poisoned");
+        let active = state.snapshot.session_id == Some(session_id)
+            && !matches!(state.snapshot.phase, SelectionPhase::Cancelled);
+        if !active {
+            return false;
+        }
+        state.snapshot.phase = if settled {
+            SelectionPhase::Failed
+        } else {
+            SelectionPhase::Preview
+        };
+        let snapshot = state.snapshot.clone();
+        drop(state);
+        self.events.publish(
+            Some(session_id),
+            BackendEventKind::SelectionStateChanged(snapshot),
+        );
+        settled
     }
 
     fn begin_revert(&self, session_id: SessionId) -> Result<(), BackendError> {
@@ -543,6 +613,27 @@ impl SelectionServiceInner {
 }
 
 impl SelectionApi for SelectionService {
+    fn bind_runtime_restore_guard(
+        &self,
+        guard: crate::domains::RuntimeRestoreGuard,
+        spawner: Arc<dyn crate::config::TaskSpawner>,
+    ) -> Result<(), BackendError> {
+        self.inner.runtime_work.bind(guard, spawner)
+    }
+
+    fn runtime_restore_idle(&self) -> bool {
+        self.inner.state.read().is_ok_and(|state| {
+            matches!(
+                state.snapshot.phase,
+                SelectionPhase::Idle
+                    | SelectionPhase::Completed
+                    | SelectionPhase::Cancelled
+                    | SelectionPhase::Failed
+            ) && !state.reverting
+                && self.inner.runtime_work.runtime_restore_idle()
+        })
+    }
+
     fn snapshot(&self) -> BoxFuture<'static, Result<SelectionSnapshot, BackendError>> {
         let inner = Arc::clone(&self.inner);
         Box::pin(async move {
@@ -561,6 +652,7 @@ impl SelectionApi for SelectionService {
     ) -> BoxFuture<'static, Result<SessionId, BackendError>> {
         let inner = Arc::clone(&self.inner);
         Box::pin(async move {
+            let _runtime = inner.begin_runtime_work()?;
             let session_id = inner.begin(&request)?;
             let result = async {
                 let capture = inner
@@ -568,14 +660,26 @@ impl SelectionApi for SelectionService {
                     .capture(session_id, request.selected_text.clone())
                     .await?;
                 inner.set_capture(session_id, &capture)?;
-                let (context, output_mode, uses_llm) = inner
+                let (mut context, output_mode, uses_llm) = inner
                     .polish_context(&request, inner.source_app(session_id)?)
                     .await?;
+                context.polish.selection_input = true;
                 let context = Arc::new(context);
                 inner.set_context(session_id, Arc::clone(&context))?;
                 let (output, polish_ms) = if uses_llm {
                     let polish_started = std::time::Instant::now();
-                    let output = inner
+                    // Option C: selection polish previously missed the
+                    // simplified/traditional preference (the voice-input path already
+                    // applies apply_chinese_script_preference at finish). Align here —
+                    // LLM output gets a deterministic script conversion per user
+                    // setting, independent of the prompt, keeping small-model
+                    // simplified-script drift out of the preview/replacement. The
+                    // non-LLM branch only echoes the raw selection and does no
+                    // conversion.
+                    // `context` is moved into polish() later; grab the Copy preference
+                    // into a local first.
+                    let script_pref = context.polish.chinese_script_preference;
+                    let mut output = inner
                         .polisher
                         .polish(
                             session_id,
@@ -584,6 +688,38 @@ impl SelectionApi for SelectionService {
                             Arc::new(DiscardTextStreamSink),
                         )
                         .await?;
+                    // Scaffolding stripping (2026-09-11 spider-story incident): small
+                    // models intermittently echo the user-message template lines and
+                    // the <raw_transcript> envelope along with the body text. The
+                    // prompt-level ban only partially works on 35B-class models, so
+                    // this deterministic post-processing (model-independent) runs
+                    // here: a live tag can only come from an echo — tags were already
+                    // sanitized out of the user text before it entered the LLM, and a
+                    // well-formed output cannot contain live tags, so extracting the
+                    // text inside the tag has zero false positives.
+                    let before_strip = output.text.clone();
+                    let stripped = crate::streaming_insert::strip_echoed_scaffolding(&output.text);
+                    if stripped != before_strip {
+                        log::info!(
+                            "[selection-polish] stripped echoed scaffolding: {} -> {} chars",
+                            before_strip.chars().count(),
+                            stripped.chars().count()
+                        );
+                        output.text = stripped;
+                    }
+                    let before = output.text.clone();
+                    output.text = crate::streaming_insert::apply_chinese_script_preference(
+                        &output.text,
+                        script_pref,
+                    );
+                    if output.text != before {
+                        log::info!(
+                            "[selection-polish] script preference applied: {:?} {} -> {} chars",
+                            script_pref,
+                            before.chars().count(),
+                            output.text.chars().count(),
+                        );
+                    }
                     (
                         output,
                         Some(
@@ -622,8 +758,7 @@ impl SelectionApi for SelectionService {
             }
             .await;
             if result.is_err() && inner.fail_if_active(session_id) {
-                let _ = inner.polisher.cancel(session_id).await;
-                let _ = inner.runtime.cancel(session_id).await;
+                inner.cancel_runtime_best_effort(session_id).await;
                 inner.hide_preview();
             }
             result
@@ -637,6 +772,7 @@ impl SelectionApi for SelectionService {
     ) -> BoxFuture<'static, Result<(), BackendError>> {
         let inner = Arc::clone(&self.inner);
         Box::pin(async move {
+            let _runtime = inner.begin_runtime_work()?;
             let (source_text, replacement_text) = inner.applying_text(session_id, text)?;
             let replacement_text = inner.corrected_replacement(session_id, replacement_text)?;
             let result = inner
@@ -650,9 +786,13 @@ impl SelectionApi for SelectionService {
                     Ok(())
                 }
                 Err(error) => {
-                    if inner.fail_if_active(session_id) {
-                        let _ = inner.polisher.cancel(session_id).await;
-                        let _ = inner.runtime.cancel(session_id).await;
+                    // Triage: a dead session (stale / concurrent confirm) must
+                    // settle; transient platform errors (focus restore / target
+                    // recheck jitter) keep the preview retryable — otherwise the
+                    // window is hidden and busy sticks, looking like an unresponsive
+                    // confirm button.
+                    if inner.settle_confirm_failure(session_id, &error) {
+                        inner.cancel_runtime_best_effort(session_id).await;
                         inner.hide_preview();
                     }
                     Err(error)
@@ -666,7 +806,7 @@ impl SelectionApi for SelectionService {
         session_id: Option<SessionId>,
     ) -> BoxFuture<'static, Result<(), BackendError>> {
         let inner = Arc::clone(&self.inner);
-        Box::pin(async move {
+        self.inner.runtime_work.cleanup(Box::pin(async move {
             let active_session = {
                 let mut state = inner.state.write().expect("selection state lock poisoned");
                 let Some(active_session) = state.snapshot.session_id else {
@@ -695,12 +835,13 @@ impl SelectionApi for SelectionService {
             let runtime_result = inner.runtime.cancel(active_session).await;
             polish_result?;
             runtime_result
-        })
+        }))
     }
 
     fn revert(&self, session_id: SessionId) -> BoxFuture<'static, Result<(), BackendError>> {
         let inner = Arc::clone(&self.inner);
         Box::pin(async move {
+            let _runtime = inner.begin_runtime_work()?;
             inner.begin_revert(session_id)?;
             match inner.runtime.revert(session_id).await {
                 Ok(outcome) => inner.finish_revert(session_id, outcome),

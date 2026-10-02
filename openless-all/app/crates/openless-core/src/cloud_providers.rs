@@ -16,8 +16,8 @@ use crate::asr::tencent_cloud::TencentCloudASRError;
 use crate::asr::{
     BailianCredentials, BailianRealtimeASR, DashScopeMultimodalASR, DictionaryHotword,
     ElevenLabsBatchASR, MimoBatchASR, Qwen3RealtimeASR, Qwen3RealtimeCredentials,
-    SonioxCredentials, SonioxStreamingASR,
-    StepfunRealtimeASR, StepfunRealtimeCredentials, TencentCloudCredentials,
+    SonioxCredentials, SonioxStreamingASR, StepfunRealtimeASR, StepfunRealtimeCredentials,
+    TencentCloudCredentials,
     TencentCloudStreamingASR, VolcengineCredentials, VolcengineStreamingASR, WhisperBatchASR,
     XfyunCredentials, XfyunStreamingASR,
 };
@@ -62,6 +62,7 @@ pub const SHARED_CLOUD_ASR_PROVIDER_TYPES: &[&str] = &[
     "openrouter",
     "orcarouter",
     "zenmux",
+    "minimax",
     "openai-compatible",
     "xiaomi-mimo-asr",
     "iflytek",
@@ -79,6 +80,8 @@ pub const SHARED_CLOUD_LLM_PROVIDER_TYPES: &[&str] = &[
     "mimo",
     "cometapi",
     "openrouterFree",
+    "requesty",
+    "api-route",
     "orcarouter",
     "alibabaCoding",
     "codingPlanX",
@@ -140,6 +143,7 @@ struct CloudTranscriptionPreparation {
     context: Arc<DictationContext>,
     provider_type: String,
     effective_provider: String,
+    bailian_protocol: crate::provider_rules::BailianProtocol,
     kind: crate::provider_rules::ActiveAsrProviderKind,
     model: String,
     api_key: String,
@@ -411,9 +415,14 @@ async fn prepare_cloud_transcription(
         .clone()
         .or_else(|| value(ASR_MODEL_ACCOUNT))
         .unwrap_or_default();
-    let effective_provider =
-        crate::provider_rules::resolve_effective_asr_provider(&provider_type, &model)
-            .map_err(|message| BackendError::new(BackendErrorCode::InvalidArgument, message))?;
+    let bailian_protocol = crate::provider_rules::BailianProtocol::from_config(
+        &provider_type,
+        value(ASR_ADVANCED_CONFIG_ACCOUNT).as_deref(),
+    )
+    .map_err(|message| BackendError::new(BackendErrorCode::InvalidArgument, message))?;
+    let effective_provider = bailian_protocol
+        .resolve_provider(&provider_type, &model)
+        .map_err(|message| BackendError::new(BackendErrorCode::InvalidArgument, message))?;
     let advanced_config = crate::provider_rules::advanced_asr_config_for(
         &provider_type,
         value(ASR_ADVANCED_CONFIG_ACCOUNT).as_deref(),
@@ -423,6 +432,7 @@ async fn prepare_cloud_transcription(
         provider_type,
         kind: crate::provider_rules::active_asr_provider_kind(&effective_provider),
         effective_provider,
+        bailian_protocol,
         api_key: value(ASR_API_KEY_ACCOUNT).unwrap_or_default(),
         endpoint: value(ASR_ENDPOINT_ACCOUNT).unwrap_or_default(),
         advanced_config,
@@ -657,24 +667,22 @@ async fn build_cloud_transcription_session(
             let stored_endpoint = non_blank_owned(endpoint)
                 .unwrap_or_else(|| crate::asr::dashscope_multimodal::DEFAULT_ENDPOINT.to_string());
             let endpoint = if provider_type == crate::asr::bailian::PROVIDER_ID {
-                let protocol =
-                    match crate::provider_rules::dashscope_batch_protocol_for_model(&model) {
-                        Some(crate::provider_rules::DashScopeBatchProtocol::AsyncTranscription) => {
-                            BailianEndpointProtocol::AsyncTranscription
-                        }
-                        _ => BailianEndpointProtocol::Multimodal,
-                    };
+                let protocol = match preparation.bailian_protocol.batch_protocol(&model) {
+                    Some(crate::provider_rules::DashScopeBatchProtocol::AsyncTranscription) => {
+                        BailianEndpointProtocol::AsyncTranscription
+                    }
+                    _ => BailianEndpointProtocol::Multimodal,
+                };
                 crate::provider_rules::derive_bailian_endpoint(&stored_endpoint, protocol)
                     .unwrap_or(stored_endpoint)
             } else {
                 stored_endpoint
             };
             (
-                CloudTranscriptionSessionKind::DashScope(Arc::new(DashScopeMultimodalASR::new(
-                    api_key,
-                    endpoint,
-                    model.clone(),
-                ))),
+                CloudTranscriptionSessionKind::DashScope(Arc::new(
+                    DashScopeMultimodalASR::new(api_key, endpoint, model.clone())
+                        .with_protocol(preparation.bailian_protocol),
+                )),
                 Some(model),
             )
         }
@@ -711,6 +719,9 @@ async fn build_cloud_transcription_session(
                 ),
             )
             .with_request_format(crate::provider_rules::whisper_request_format(provider_type));
+            if provider_type == "minimax" {
+                provider = provider.with_endpoint_path("/speech_to_text");
+            }
             if crate::provider_rules::whisper_uses_hotwords(provider_type) {
                 provider = provider.with_hotwords(context.polish.hotwords.clone());
             }
@@ -1712,7 +1723,8 @@ async fn build_omni_provider(
 /// Validate an Omni provider using the same construction and request path as
 /// the production dictation pipeline.  The probe is intentionally text-only:
 /// it exercises credential, endpoint, model and protocol resolution without
-/// retaining user audio.
+/// retaining user audio.  UI must not treat text success as proof that audio
+/// dictation works (issue #1118).
 pub async fn validate_shared_omni_provider(
     credentials: Arc<dyn CredentialStore>,
     context: Arc<DictationContext>,
@@ -1731,6 +1743,27 @@ pub async fn validate_shared_omni_provider(
     }
 
     Ok(())
+}
+
+/// First-stage Omni for Selection Voice / Less Computer (#1119 product B):
+/// audio + prompt → instruction/command text. Downstream intent / EditPlan /
+/// Agent submit still use their existing LLM (or Agent) paths.
+///
+/// Empty Omni output is returned as `Ok("")` so callers can apply product
+/// policy (e.g. Less Computer Dictate → `Empty` outcome without a chat error;
+/// Selection Voice / Agent still treat emptiness as a provider failure).
+pub(crate) async fn complete_omni_instruction_from_wav(
+    credentials: &dyn CredentialStore,
+    context: &DictationContext,
+    wav_bytes: &[u8],
+    system_prompt: &str,
+) -> Result<String, BackendError> {
+    let provider = build_omni_provider(credentials, context).await?;
+    let result = provider
+        .complete(system_prompt, "", Some(wav_bytes))
+        .await
+        .map_err(map_omni_error)?;
+    Ok(result.trim().to_string())
 }
 
 fn cancelled_omni_error() -> BackendError {
@@ -2164,6 +2197,64 @@ fn build_omni_prompt(context: &DictationContext) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn manual_bailian_protocol_is_snapshotted_for_recording() {
+        use super::*;
+        use crate::provider_rules::BailianProtocol;
+        let credentials = crate::InMemoryCredentialStore::default();
+        for (name, expected) in [
+            ("dashscope-realtime", "bailian"),
+            ("qwen-realtime", "bailian-qwen3-realtime"),
+            ("multimodal", "bailian-fun-asr-flash"),
+            ("qwen-multimodal", "bailian-fun-asr-flash"),
+            ("async-transcription", "bailian-fun-asr-flash"),
+        ] {
+            let raw = format!(r#"{{"bailianProtocol":"{name}"}}"#);
+            for (account, value) in [
+                (ASR_API_KEY_ACCOUNT, "fixture-key"),
+                (ASR_ADVANCED_CONFIG_ACCOUNT, raw.as_str()),
+            ] {
+                credentials
+                    .write(
+                        CredentialKey::new(
+                            CredentialNamespace::Asr,
+                            Some(name.to_string()),
+                            account,
+                        )
+                        .unwrap(),
+                        crate::SecretValue::new(value),
+                    )
+                    .await
+                    .unwrap();
+            }
+            let mut context = DictationContext::default();
+            context.asr.provider_id = name.to_string();
+            context.asr.provider_type = "bailian".into();
+            context.asr.model = Some("unknown-model".into());
+            let prepared = prepare_cloud_transcription(&credentials, Arc::new(context))
+                .await
+                .unwrap();
+            assert_eq!(prepared.effective_provider, expected);
+            assert_eq!(prepared.model, "unknown-model");
+            // A later settings change must not mutate an already prepared recording.
+            credentials
+                .write(
+                    CredentialKey::new(
+                        CredentialNamespace::Asr,
+                        Some(name.to_string()),
+                        ASR_ADVANCED_CONFIG_ACCOUNT,
+                    )
+                    .unwrap(),
+                    crate::SecretValue::new("{}"),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                prepared.bailian_protocol,
+                BailianProtocol::from_config("bailian", Some(&raw)).unwrap()
+            );
+        }
+    }
     use super::*;
     use crate::{InMemoryCredentialStore, ProviderInvocation, SecretValue};
 

@@ -1,17 +1,18 @@
-//! 本地 ASR 引擎入口。
+//! Local ASR engine entry point.
 //!
 //! 当前本地引擎：
 //! - **macOS**：Qwen3-ASR 可选 MLX/Metal 或 C/CPU；
-//! - **Linux**：Qwen3-ASR C/CPU；
 //! - **Windows**：Foundry Local Whisper（`foundry_*`），以及 sherpa-onnx-local
 //!   实验 provider（`sherpa*`，offline batch + online streaming）
 
+#[cfg(any(target_os = "windows", test))]
+mod blocking_decode;
 pub mod cache;
 pub mod foundry;
 pub mod foundry_native;
 pub mod foundry_provider;
 pub mod foundry_runtime;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 mod local_provider;
 pub mod models;
 pub mod sherpa;
@@ -38,15 +39,15 @@ mod apple_speech_provider;
 mod mlx_qwen_engine;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod mlx_worker;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 mod qwen_engine;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 mod qwen_ffi;
 
 #[cfg(target_os = "macos")]
 #[allow(unused_imports)]
 pub use apple_speech_provider::{native_name_to_apple_locale, AppleSpeechAsr};
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 pub use local_provider::LocalQwenAsr;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub use mlx_qwen_engine::MlxQwenAsrEngine;
@@ -67,7 +68,7 @@ pub use whisper_provider::{LocalWhisperAsr, LocalWhisperCache};
 pub use models::ModelId;
 
 /// 本地 Qwen3-ASR 在 active_asr 字段里的标识；与 Core ProviderDescriptor 的 type 对齐。
-/// 旧版本的本地 Qwen3-ASR provider id。macOS 映射到 MLX，Linux 映射到 C，
+/// 旧版本的本地 Qwen3-ASR provider id。macOS 映射到 MLX，
 /// 仅用于兼容已经保存的渠道配置；新渠道请使用下方两个明确后端 id。
 pub const PROVIDER_ID: &str = "local-qwen3";
 pub const LOCAL_QWEN3_MLX_PROVIDER_ID: &str = "local-qwen3-mlx";
@@ -107,8 +108,6 @@ pub fn qwen_backend_for_provider(id: &str) -> Option<QwenBackend> {
     match id {
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         PROVIDER_ID | LOCAL_QWEN3_MLX_PROVIDER_ID => Some(QwenBackend::Mlx),
-        #[cfg(target_os = "linux")]
-        PROVIDER_ID | LOCAL_QWEN3_C_PROVIDER_ID => Some(QwenBackend::C),
         #[cfg(target_os = "macos")]
         LOCAL_QWEN3_C_PROVIDER_ID => Some(QwenBackend::C),
         #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
@@ -117,14 +116,14 @@ pub fn qwen_backend_for_provider(id: &str) -> Option<QwenBackend> {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 pub enum LocalQwenEngine {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     Mlx(MlxQwenAsrEngine),
     C(qwen_engine::QwenAsrEngine),
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 impl LocalQwenEngine {
     pub fn load(backend: QwenBackend, model_dir: &std::path::Path) -> anyhow::Result<Self> {
         match backend {
@@ -176,8 +175,9 @@ impl LocalQwenEngine {
         }
     }
 
-    /// Dictation 转写保持各后端原有语义：MLX 整段 batch；C 追加 0.5 秒静音后
-    /// 走流式解码，并将稳定 token 交给调用方实时显示。
+    /// Dictation transcription keeps each backend's existing semantics: MLX batches the whole
+    /// segment; C appends 0.5s of silence and streams, handing stable tokens to the caller for
+    /// live display.
     pub fn transcribe_dictation_with_handler<F>(
         &self,
         operation_id: u64,
@@ -202,15 +202,15 @@ impl LocalQwenEngine {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 const C_STREAM_TAIL_PADDING_SAMPLES: usize = 8_000;
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 fn append_c_stream_tail_padding(samples: &mut Vec<f32>) {
     samples.resize(samples.len() + C_STREAM_TAIL_PADDING_SAMPLES, 0.0);
 }
 
-#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(test, target_os = "macos"))]
 mod qwen_dictation_tests {
     use super::*;
 
@@ -229,10 +229,10 @@ mod qwen_dictation_tests {
     }
 }
 
-/// Apple Speech（SFSpeechRecognizer）本地 ASR 的 provider id；与 Core
-/// ProviderDescriptor 的 type 对齐（issue #574）。该字符串在所有平台都可被识别，
-/// 但 provider 实现只在 macOS 编译；非 macOS 上由上层判为 not-configured /
-/// 不可用（见 commands / coordinator 的平台门控）。
+/// Provider id for the Apple Speech (SFSpeechRecognizer) local ASR; aligned with the Core
+/// ProviderDescriptor type (issue #574). The string is recognizable on all platforms,
+/// but the provider implementation compiles only on macOS; on non-macOS the upper layer treats
+/// it as not-configured / unavailable (see the platform gating in commands / coordinator).
 pub const APPLE_SPEECH_PROVIDER_ID: &str = "apple-speech";
 
 #[allow(dead_code)]

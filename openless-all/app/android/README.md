@@ -40,6 +40,10 @@ Manifest 合并脚本：
 - [`scripts/merge-android-shizuku-manifest.mjs`](../scripts/merge-android-shizuku-manifest.mjs) — Shizuku Provider / 授权 Activity
 - [`scripts/patch-android-shizuku-deps.mjs`](../scripts/patch-android-shizuku-deps.mjs) — Shizuku Gradle 依赖
 
+### 轻量拼音输入（Pinyin，可选模式）
+
+英文键盘长按空格可在英文 / 拼音之间切换。拼音模式为离线精确匹配查找（单字全拼 + 高频简拼词语），不含 NDK / JNI / librime / 语言模型，不新增联网权限。核心类：`LitePinyinController`（编码缓冲 + 查询）、`LitePinyinRepository`（词库索引 + 排序）、`LitePinyinUserFrequency`（本地选择频率）。词库资源 `android/assets/pinyin_chars.tsv`（约 8105 字）与 `pinyin_phrases.tsv`（约 2000 词），由 [`scripts/generate-pinyin-characters.mjs`](../scripts/generate-pinyin-characters.mjs) / [`scripts/generate-pinyin-phrases.mjs`](../scripts/generate-pinyin-phrases.mjs) 从三方开源数据生成，来源、版本与许可证见同目录下的 `pinyin_chars.LICENSE.txt` / `pinyin_phrases.LICENSE.txt`。
+
 ## 前端（`android/frontend/`，别名 `@android`）
 
 | 路径 | 职责 |
@@ -50,6 +54,22 @@ Manifest 合并脚本：
 | `components/AndroidPermissionsPanel.tsx` | 设置页 Android 权限与 overlay 配置 |
 
 `src/lib/types.ts` 与 `src/lib/ipc.ts` 保留 re-export，现有 import 路径仍可用。
+
+## 笔画输入法 IME 最近更新（`OpenLessImeService.kt`）
+
+面板高度固定为 300dp（`SwipeModeContainer.onMeasure()` 强制），笔画面板内编码区 24dp + 候选区 36dp（合计 60dp）与下方按键区共同瓜分剩余高度，任何输入状态下都不重新布局。
+
+| 功能 | 说明 |
+|------|------|
+| 手势 | 左右切换面板滑动阈值 72dp→100dp；新增下滑 ≥120dp 收起键盘（`hideKeyboardPanel()`）；面板切换带滑入动画（`refreshInputView(slideDirection)`） |
+| 编码区/候选区 | 固定高度、扁平背景 + 分隔线（`buildEncodeAreaBackground()`），选中/首选候选字改为编码文字同款浅蓝 + 加粗（`strokeEncodeAccentColor`），不再用红色；候选区超出部分用 `showCandidateOverlay()` 悬浮层展开，不推挤按键 |
+| 中间 3×4 笔画键 | 间距收紧到 ~2dp（键位 `setMargins(dp(1)...)`），并与右侧红色功能键列、左侧标点列的行边距对齐一致 |
+| 键盘设置 | 长按 Logo 打开全屏原生设置页 `OpenLessKeyboardSettingsActivity`（先实现震动强度/时长，后续可继续加项） |
+| 语言同步修复 | `OpenLessApplication` 原来按精确类型判断 `MainActivity`，实际设置页跑在子类 `OpenLessBackendWarmupActivity` 上从未触发，改成 `is` 判断 |
+| 剪贴板 | 新增历史持久化 `OpenLessClipboardHistory.kt`，按钮配色与笔画面板统一 |
+| 语音纠错联动 | `native_bridge.rs` 新增 `nativeAddCorrectionRule`，手动改过的听写结果自动写入纠错词典 |
+
+开发流程：每次改动后用 `npm run copy:android-scaffolding` 同步 → `gradlew app:assembleArm64Debug -x app:rustBuildArm64Debug`（Kotlin-only 改动跳过 Rust 重编译）→ `adb install -r` 装机 → 通过 `adb exec-out screencap` 或用户反馈截图核对真机效果；涉及尺寸争议时用 `adb shell wm density` + 实测 px 反推 dp，避免凭空猜测布局问题。
 
 ## 构建与 CI
 
@@ -67,7 +87,7 @@ node scripts/patch-android-shizuku-deps.mjs
 CI=true npm run tauri:android:build
 ```
 
-Workflow： [`.github/workflows/android-apk.yml`](../../.github/workflows/android-apk.yml)
+Workflow： [`.github/workflows/android-apk.yml`](../../../.github/workflows/android-apk.yml)
 
 **本地 overlay / 无障碍开发（v3）** — 与 CI 相同的 manifest 合并链，使用本地 init / copy 脚本：
 
@@ -84,5 +104,4 @@ npm run tauri:android:build
 
 ## 相关文档
 
-- [AGENTS.md](../../AGENTS.md) — 真机闪退排查
-- [docs/android-mobile-apk-overlay-plan.md](../../docs/android-mobile-apk-overlay-plan.md) — 分阶段产品计划
+- [docs/android-mobile-apk-overlay-plan.md](../../../docs/android-mobile-apk-overlay-plan.md) — 分阶段产品计划

@@ -2,11 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-const source = readFileSync(
-  new URL('../src-tauri/src/remote_server/assets/app.js', import.meta.url),
-  'utf8',
-);
-const prefix = source.slice(0, source.indexOf('  // 极简插值：'));
+const source = readFileSync(new URL('../assets/remote-input/app.js', import.meta.url), 'utf8');
+const prefix = source.slice(0, source.indexOf('  // Minimal interpolation:'));
 assert(prefix.includes('var L = I18N[LANG]'), 'read the actual locale dictionary and resolver');
 function labels(injected, systemLanguage = 'en-US') {
   return vm.runInNewContext(

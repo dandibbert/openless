@@ -34,6 +34,7 @@ const ASR_PROVIDER_TYPES: &[(&str, &str)] = &[
     ("siliconflow", "asrSiliconflow"),
     ("stepfun", "asrStepfun"),
     ("zhipu", "asrZhipu"),
+    ("minimax", "asrMinimax"),
     ("groq", "asrGroq"),
     ("whisper", "asrWhisper"),
     ("openrouter", "asrOpenrouter"),
@@ -63,6 +64,8 @@ const LLM_PROVIDER_TYPES: &[(&str, &str)] = &[
     ("mimo", "mimo"),
     ("cometapi", "cometapi"),
     ("openrouterFree", "openrouterFree"),
+    ("requesty", "requesty"),
+    ("api-route", "apiRoute"),
     ("orcarouter", "orcarouter"),
     ("alibabaCoding", "alibabaCoding"),
     ("codingPlanX", "codingPlanX"),
@@ -355,6 +358,7 @@ fn static_models(kind: ProviderKind, provider_type: &str) -> &'static [&'static 
         (ProviderKind::Asr, "xiaomi-mimo-asr") => &[crate::asr::mimo::DEFAULT_MODEL],
         (ProviderKind::Asr, "bailian-fun-asr-flash") => DASHSCOPE_MODELS,
         (ProviderKind::Asr, "elevenlabs") => &[crate::asr::elevenlabs::DEFAULT_MODEL],
+        (ProviderKind::Asr, "minimax") => &["asr-1.0"],
         (ProviderKind::Llm, crate::polish::CODEX_OAUTH_PROVIDER_ID) => &[
             crate::polish::CODEX_DEFAULT_MODEL,
             "gpt-5.3-codex",
@@ -418,8 +422,9 @@ pub struct CredentialConfiguration {
 pub fn volcengine_configured(configuration: &CredentialConfiguration) -> bool {
     use crate::asr::volcengine::VolcengineAuthMode;
 
-    // resource id 不是配置门槛：留空时运行时回落默认资源
-    //（见 VolcengineCredentials::resolve_resource_id），认证只取决于密钥本身。
+    // The resource id is not a configuration gate: when left empty the runtime falls
+    // back to the default resource (see VolcengineCredentials::resolve_resource_id);
+    // authentication depends only on the keys themselves.
     let Ok(service) = crate::asr::volcengine::VolcengineService::parse(
         configuration
             .volcengine_service
@@ -559,6 +564,7 @@ pub fn default_asr_endpoint(provider_type: &str) -> Option<&'static str> {
         "siliconflow" => Some("https://api.siliconflow.cn/v1"),
         "stepfun" => Some("https://api.stepfun.com/v1"),
         "zhipu" => Some("https://open.bigmodel.cn/api/paas/v4"),
+        "minimax" => Some("https://api.minimaxi.com/v1"),
         "groq" => Some("https://api.groq.com/openai/v1"),
         "whisper" => Some("https://api.openai.com/v1"),
         "openrouter" => Some("https://openrouter.ai/api/v1"),
@@ -579,6 +585,7 @@ pub fn default_asr_model(provider_type: &str) -> Option<&'static str> {
         "siliconflow" => Some("FunAudioLLM/SenseVoiceSmall"),
         "stepfun" => Some("stepaudio-2.5-asr"),
         "zhipu" => Some("glm-asr-2512"),
+        "minimax" => Some("asr-1.0"),
         "groq" => Some("whisper-large-v3-turbo"),
         "whisper" => Some("whisper-1"),
         "openrouter" => Some("openai/whisper-large-v3-turbo"),
@@ -602,6 +609,8 @@ pub fn default_llm_endpoint(provider_type: &str) -> Option<&'static str> {
         "mimo" => Some("https://api.xiaomimimo.com/v1"),
         "cometapi" => Some("https://api.cometapi.com/v1"),
         "openrouterFree" => Some("https://openrouter.ai/api/v1"),
+        "requesty" => Some("https://router.requesty.ai/v1"),
+        "api-route" => Some("https://global.api-route.com/v1"),
         "orcarouter" => Some(crate::asr::mimo::ORCAROUTER_DEFAULT_ENDPOINT),
         "alibabaCoding" => Some("https://coding-intl.dashscope.aliyuncs.com/v1"),
         "codingPlanX" => Some("https://api.codingplanx.ai/v1"),
@@ -624,6 +633,8 @@ pub fn default_llm_model(provider_type: &str) -> Option<&'static str> {
         crate::polish::CODEX_OAUTH_PROVIDER_ID => Some(crate::polish::CODEX_DEFAULT_MODEL),
         "mimo" => Some("xiaomi/mimo-v2-flash"),
         "openrouterFree" => Some("qwen/qwen3-coder:free"),
+        "requesty" => Some("openai/gpt-4o-mini"),
+        "api-route" => Some("deepseek-v4-flash"),
         "orcarouter" => Some("orcarouter/fusion-flash"),
         "alibabaCoding" => Some("qwen3-coder-plus"),
         "codingPlanX" => Some("gpt-5-mini"),
@@ -771,7 +782,10 @@ pub fn is_stepfun_realtime_provider(id: &str) -> bool {
 }
 
 pub fn is_mimo_provider(id: &str) -> bool {
-    matches!(id, MIMO_PROVIDER_ID | crate::asr::mimo::ORCAROUTER_PROVIDER_ID)
+    matches!(
+        id,
+        MIMO_PROVIDER_ID | crate::asr::mimo::ORCAROUTER_PROVIDER_ID
+    )
 }
 
 pub fn is_dashscope_multimodal_provider(id: &str) -> bool {
@@ -793,8 +807,76 @@ pub fn is_tencent_cloud_provider(id: &str) -> bool {
 pub fn is_whisper_compatible_provider(id: &str) -> bool {
     matches!(
         id,
-        "whisper" | "siliconflow" | "zhipu" | "groq" | "openrouter" | "stepfun" | "zenmux"
+        "whisper"
+            | "siliconflow"
+            | "zhipu"
+            | "groq"
+            | "openrouter"
+            | "stepfun"
+            | "zenmux"
+            | "minimax"
     ) || id == OPENAI_COMPATIBLE_ASR_PROVIDER_ID
+}
+
+/// Explicit channel selection takes precedence over model-name inference.
+/// Stored inside asr.advanced_config so all hosts use the existing credential lifecycle.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BailianProtocol {
+    #[default]
+    Auto,
+    DashscopeRealtime,
+    QwenRealtime,
+    Multimodal,
+    QwenMultimodal,
+    AsyncTranscription,
+}
+
+impl BailianProtocol {
+    pub fn from_config(provider: &str, raw: Option<&str>) -> Result<Self, String> {
+        if !is_bailian_provider(provider) {
+            return Ok(Self::Auto);
+        }
+        let Some(raw) = raw.filter(|s| !s.trim().is_empty()) else {
+            return Ok(Self::Auto);
+        };
+        let value: serde_json::Value =
+            serde_json::from_str(raw).map_err(|_| "百炼接口配置不是有效 JSON".to_string())?;
+        match value.get("bailianProtocol") {
+            None => Ok(Self::Auto),
+            Some(value) => serde_json::from_value(value.clone())
+                .map_err(|_| "不支持的百炼接口类型，请重新选择接口".to_string()),
+        }
+    }
+
+    pub fn resolve_provider(self, provider: &str, model: &str) -> Result<String, String> {
+        if !is_bailian_provider(provider) || self == Self::Auto {
+            return resolve_effective_asr_provider(provider, model);
+        }
+        if model.trim().is_empty() {
+            return Err("手动选择百炼接口时必须填写模型 ID".to_string());
+        }
+        Ok(match self {
+            Self::DashscopeRealtime => BAILIAN_PROVIDER_ID,
+            Self::QwenRealtime => QWEN3_REALTIME_PROVIDER_ID,
+            _ => DASHSCOPE_MULTIMODAL_PROVIDER_ID,
+        }
+        .to_string())
+    }
+
+    pub fn batch_protocol(self, model: &str) -> Option<DashScopeBatchProtocol> {
+        match self {
+            Self::Auto => dashscope_batch_protocol_for_model(model),
+            Self::Multimodal | Self::QwenMultimodal => Some(DashScopeBatchProtocol::Multimodal),
+            Self::AsyncTranscription => Some(DashScopeBatchProtocol::AsyncTranscription),
+            _ => None,
+        }
+    }
+
+    pub fn uses_qwen_envelope(self, model: &str) -> bool {
+        self == Self::QwenMultimodal
+            || (self == Self::Auto && dashscope_uses_qwen_sync_envelope(model))
+    }
 }
 
 pub fn resolve_effective_asr_provider(active_asr: &str, model: &str) -> Result<String, String> {
@@ -823,7 +905,8 @@ pub fn resolve_effective_asr_provider(active_asr: &str, model: &str) -> Result<S
 }
 
 fn is_classic_bailian_realtime_model(model: &str) -> bool {
-    model.starts_with("fun-asr-realtime")
+    model == "qwen-audio-3.0-asr-flash-streaming"
+        || model.starts_with("fun-asr-realtime")
         || model.starts_with("fun-asr-flash-8k-realtime")
         || model.starts_with("paraformer-realtime")
         || model.starts_with("paraformer-8k-realtime")
@@ -1022,9 +1105,10 @@ pub fn volc_resource_history_label(resource_id: &str) -> Option<String> {
     allowed.then(|| id.to_string())
 }
 
-/// 1.x native ASR 的动态预算保留在 Core，Host 只负责执行 deadline 后的原生取消。
-/// MLX/C 和 Apple Speech 给短音频 30 秒余量；Whisper Metal 保留 15 秒地板；
-/// Windows batch 的 CPU/GPU 回退各自消费完整预算，不能再套一个更短的外层计时器。
+/// The dynamic budget for 1.x native ASR stays in Core; the Host only executes native
+/// cancellation after the deadline. MLX/C and Apple Speech get a 30-second margin for
+/// short audio; Whisper Metal keeps a 15-second floor; the Windows batch CPU/GPU
+/// fallbacks each consume the full budget — no shorter outer timer may wrap them.
 pub fn native_transcribe_timeout(provider_type: &str, duration_ms: u64) -> Duration {
     let (numerator, denominator, extra, minimum) = match provider_type {
         "local-whisper" | "apple-whisper" => (1_u64, 2_000_u64, 10, 15),
@@ -1073,7 +1157,63 @@ mod tests {
     }
 
     #[test]
+    fn manual_bailian_protocol_overrides_names_and_preserves_auto() {
+        for (name, expected) in [
+            ("dashscope-realtime", BAILIAN_PROVIDER_ID),
+            ("qwen-realtime", QWEN3_REALTIME_PROVIDER_ID),
+            ("multimodal", DASHSCOPE_MULTIMODAL_PROVIDER_ID),
+            ("qwen-multimodal", DASHSCOPE_MULTIMODAL_PROVIDER_ID),
+            ("async-transcription", DASHSCOPE_MULTIMODAL_PROVIDER_ID),
+        ] {
+            let raw = format!(r#"{{"bailianProtocol":"{name}"}}"#);
+            let protocol = BailianProtocol::from_config("bailian", Some(&raw)).unwrap();
+            for model in ["unknown-model", "fun-asr", "qwen3-asr-flash-realtime"] {
+                assert_eq!(
+                    protocol.resolve_provider("bailian", model).unwrap(),
+                    expected
+                );
+            }
+            assert!(protocol.resolve_provider("bailian", " ").is_err());
+            assert_eq!(
+                BailianProtocol::from_config("whisper", Some(&raw)).unwrap(),
+                BailianProtocol::Auto
+            );
+        }
+        assert_eq!(
+            BailianProtocol::from_config("bailian", None).unwrap(),
+            BailianProtocol::Auto
+        );
+        assert_eq!(
+            BailianProtocol::from_config("bailian", Some("{}")).unwrap(),
+            BailianProtocol::Auto
+        );
+        assert!(
+            BailianProtocol::from_config("bailian", Some(r#"{"bailianProtocol":"typo"}"#)).is_err()
+        );
+        assert!(BailianProtocol::Auto
+            .resolve_provider("bailian", "unknown-model")
+            .is_err());
+        assert_eq!(
+            BailianProtocol::Auto
+                .resolve_provider("bailian", "fun-asr")
+                .unwrap(),
+            DASHSCOPE_MULTIMODAL_PROVIDER_ID
+        );
+    }
+
+    #[test]
     fn routes_bailian_and_stepfun_models() {
+        let streaming = "qwen-audio-3.0-asr-flash-streaming";
+        assert_eq!(
+            resolve_effective_asr_provider(BAILIAN_PROVIDER_ID, streaming).unwrap(),
+            BAILIAN_PROVIDER_ID
+        );
+        assert_eq!(dashscope_batch_protocol_for_model(streaming), None);
+        assert_eq!(
+            resolve_effective_asr_provider(BAILIAN_PROVIDER_ID, "qwen-audio-3.0-asr-flash")
+                .unwrap(),
+            DASHSCOPE_MULTIMODAL_PROVIDER_ID
+        );
         assert_eq!(
             resolve_effective_asr_provider(BAILIAN_PROVIDER_ID, "fun-asr-realtime").unwrap(),
             BAILIAN_PROVIDER_ID
@@ -1165,7 +1305,8 @@ mod tests {
         configuration.volcengine_api_key = true;
         configuration.volcengine_resource_id = true;
         assert!(volcengine_configured(&configuration));
-        // resource id 留空（运行时回落默认资源）不构成「未配置」。
+        // An empty resource id (runtime falls back to the default) does not count as
+        // "unconfigured".
         configuration.volcengine_resource_id = false;
         assert!(volcengine_configured(&configuration));
         assert!(!asr_configured(
@@ -1223,6 +1364,78 @@ mod tests {
     }
 
     #[test]
+    fn requesty_descriptor_supplies_defaults_formats_and_credentials() {
+        use crate::llm_protocol::LlmRequestFormat;
+        assert!(crate::cloud_providers::SHARED_CLOUD_LLM_PROVIDER_TYPES.contains(&"requesty"));
+        let descriptor = provider_descriptor(ProviderKind::Llm, "requesty").unwrap();
+        assert_eq!(descriptor.label_key, "requesty");
+        assert_eq!(
+            descriptor.default_endpoint.as_deref(),
+            Some("https://router.requesty.ai/v1")
+        );
+        assert_eq!(
+            descriptor.default_model.as_deref(),
+            Some("openai/gpt-4o-mini")
+        );
+        assert_eq!(
+            descriptor.default_request_format,
+            Some(LlmRequestFormat::ChatCompletions)
+        );
+        assert_eq!(descriptor.supported_request_formats, LlmRequestFormat::ALL);
+        assert_eq!(descriptor.validation_probe, ValidationProbe::LlmText);
+        assert!(api_key_required(
+            ProviderKind::Llm,
+            "requesty",
+            Some("https://router.requesty.ai/v1/chat/completions")
+        ));
+        let mut configuration = CredentialConfiguration {
+            llm_endpoint: true,
+            llm_api_key_required: true,
+            llm_model: true,
+            ..CredentialConfiguration::default()
+        };
+        assert!(!llm_configured("requesty", &configuration));
+        configuration.llm_api_key = true;
+        assert!(llm_configured("requesty", &configuration));
+    }
+
+    #[test]
+    fn api_route_descriptor_supplies_defaults_formats_and_credentials() {
+        use crate::llm_protocol::LlmRequestFormat;
+        assert!(crate::cloud_providers::SHARED_CLOUD_LLM_PROVIDER_TYPES.contains(&"api-route"));
+        let descriptor = provider_descriptor(ProviderKind::Llm, "api-route").unwrap();
+        assert_eq!(descriptor.label_key, "apiRoute");
+        assert_eq!(
+            descriptor.default_endpoint.as_deref(),
+            Some("https://global.api-route.com/v1")
+        );
+        assert_eq!(
+            descriptor.default_model.as_deref(),
+            Some("deepseek-v4-flash")
+        );
+        assert_eq!(
+            descriptor.default_request_format,
+            Some(LlmRequestFormat::ChatCompletions)
+        );
+        assert_eq!(descriptor.supported_request_formats, LlmRequestFormat::ALL);
+        assert_eq!(descriptor.validation_probe, ValidationProbe::LlmText);
+        assert!(api_key_required(
+            ProviderKind::Llm,
+            "api-route",
+            Some("https://global.api-route.com/v1/chat/completions")
+        ));
+        let mut configuration = CredentialConfiguration {
+            llm_endpoint: true,
+            llm_api_key_required: true,
+            llm_model: true,
+            ..CredentialConfiguration::default()
+        };
+        assert!(!llm_configured("api-route", &configuration));
+        configuration.llm_api_key = true;
+        assert!(llm_configured("api-route", &configuration));
+    }
+
+    #[test]
     fn tencent_cloud_asr_and_tokenhub_supply_defaults_and_credentials() {
         assert!(crate::cloud_providers::SHARED_CLOUD_ASR_PROVIDER_TYPES.contains(&"tencent-cloud"));
         assert!(
@@ -1263,6 +1476,26 @@ mod tests {
         );
         assert_eq!(llm.default_request_format, None);
         assert!(llm.supported_request_formats.is_empty());
+    }
+
+    #[test]
+    fn minimax_asr_supplies_defaults_and_whisper_compatibility() {
+        assert!(crate::cloud_providers::SHARED_CLOUD_ASR_PROVIDER_TYPES.contains(&"minimax"));
+        let asr = provider_descriptor(ProviderKind::Asr, "minimax").unwrap();
+        assert_eq!(asr.label_key, "asrMinimax");
+        assert_eq!(
+            asr.default_endpoint.as_deref(),
+            Some("https://api.minimaxi.com/v1")
+        );
+        assert_eq!(asr.default_model.as_deref(), Some("asr-1.0"));
+        assert_eq!(asr.static_models, vec!["asr-1.0"]);
+        assert_eq!(asr.auth_requirement, AuthRequirement::ApiKey);
+        assert_eq!(asr.validation_probe, ValidationProbe::AsrSilence);
+        assert!(is_whisper_compatible_provider("minimax"));
+        assert_eq!(
+            active_asr_provider_kind("minimax"),
+            ActiveAsrProviderKind::WhisperCompatible
+        );
     }
 
     #[test]
