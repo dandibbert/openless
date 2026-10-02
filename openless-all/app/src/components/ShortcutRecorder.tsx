@@ -16,6 +16,7 @@ import {
 import { KbdGroup } from './Kbd';
 import { setShortcutRecordingActive, validateShortcutBinding } from '../lib/ipc';
 import type { ShortcutBinding } from '../lib/types';
+import { isImeCompositionEvent } from '../lib/imeKeyboard';
 
 /** Horizontal slide distance (px) when switching between the main row and the recording panel. */
 const SLIDE_DISTANCE = 48;
@@ -81,7 +82,7 @@ export function ShortcutRecorder({
   useEffect(() => {
     if (!menuOpen) return;
     const onKeyDown = (e: globalThis.KeyboardEvent) => {
-      if (e.key === 'Escape' && !e.isComposing) {
+      if (e.key === 'Escape' && !isImeCompositionEvent(e)) {
         e.preventDefault();
         e.stopPropagation();
         setMenuOpen(false);
