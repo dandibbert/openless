@@ -32,6 +32,7 @@ import { formatHistoryTime, formatLocaleDecimal, formatLocaleNumber } from '../l
 import { useHotkeySettings } from '../state/HotkeySettingsContext';
 import { Btn, Card, PageHeader, Pill } from './_atoms';
 import { SelectLite } from '../components/ui/SelectLite';
+import { isImeCompositionEvent } from '../lib/imeKeyboard';
 
 function useModeLabel(): Record<PolishMode, string> {
   const { t } = useTranslation();
@@ -1050,6 +1051,7 @@ function HistoryActionMenu({
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      if (isImeCompositionEvent(event)) return;
       if (event.key === 'Escape') setOpen(false);
     };
     document.addEventListener('pointerdown', onPointerDown);
