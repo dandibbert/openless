@@ -16,7 +16,8 @@ use crate::asr::tencent_cloud::TencentCloudASRError;
 use crate::asr::{
     BailianCredentials, BailianRealtimeASR, DashScopeMultimodalASR, DictionaryHotword,
     ElevenLabsBatchASR, MimoBatchASR, Qwen3RealtimeASR, Qwen3RealtimeCredentials,
-    StepfunRealtimeASR, StepfunRealtimeCredentials, TencentCloudCredentials,
+    SonioxCredentials, SonioxStreamingASR, StepfunRealtimeASR, StepfunRealtimeCredentials,
+    TencentCloudCredentials,
     TencentCloudStreamingASR, VolcengineCredentials, VolcengineStreamingASR, WhisperBatchASR,
     XfyunCredentials, XfyunStreamingASR,
 };
@@ -48,6 +49,7 @@ use crate::types::SessionId;
 
 pub const SHARED_CLOUD_ASR_PROVIDER_TYPES: &[&str] = &[
     "volcengine",
+    "soniox",
     "elevenlabs",
     "bailian",
     "bailian-qwen3-realtime",
@@ -188,6 +190,7 @@ enum CloudTranscriptionSessionKind {
     DashScope(Arc<DashScopeMultimodalASR>),
     ElevenLabs(Arc<ElevenLabsBatchASR>),
     Bailian(Arc<BailianRealtimeASR>),
+    Soniox(Arc<SonioxStreamingASR>),
     QwenRealtime(Arc<Qwen3RealtimeASR>),
     StepfunRealtime(Arc<StepfunRealtimeASR>),
     Xfyun(Arc<XfyunStreamingASR>),
@@ -240,6 +243,7 @@ impl AudioConsumer for CloudTranscriptionSession {
             CloudTranscriptionSessionKind::DashScope(provider) => provider.consume_pcm_chunk(pcm),
             CloudTranscriptionSessionKind::ElevenLabs(provider) => provider.consume_pcm_chunk(pcm),
             CloudTranscriptionSessionKind::Bailian(provider) => provider.consume_pcm_chunk(pcm),
+            CloudTranscriptionSessionKind::Soniox(provider) => provider.consume_pcm_chunk(pcm),
             CloudTranscriptionSessionKind::QwenRealtime(provider) => {
                 provider.consume_pcm_chunk(pcm)
             }
@@ -301,6 +305,11 @@ impl TranscriptionSession for CloudTranscriptionSession {
                     timeout_transcription(Duration::from_secs(120), provider.await_final_result())
                         .await?
                 }
+                CloudTranscriptionSessionKind::Soniox(provider) => {
+                    provider.send_last_frame().await.map_err(map_asr_error)?;
+                    timeout_transcription(Duration::from_secs(120), provider.await_final_result())
+                        .await?
+                }
                 CloudTranscriptionSessionKind::QwenRealtime(provider) => {
                     let _ = provider.send_last_frame().await;
                     timeout_transcription(Duration::from_secs(120), provider.await_final_result())
@@ -342,6 +351,7 @@ impl TranscriptionSession for CloudTranscriptionSession {
             CloudTranscriptionSessionKind::DashScope(provider) => provider.cancel(),
             CloudTranscriptionSessionKind::ElevenLabs(provider) => provider.cancel(),
             CloudTranscriptionSessionKind::Bailian(provider) => provider.cancel(),
+            CloudTranscriptionSessionKind::Soniox(provider) => provider.cancel(),
             CloudTranscriptionSessionKind::QwenRealtime(provider) => provider.cancel(),
             CloudTranscriptionSessionKind::StepfunRealtime(provider) => provider.cancel(),
             CloudTranscriptionSessionKind::Xfyun(provider) => provider.cancel(),
@@ -441,6 +451,7 @@ fn validate_cloud_transcription_preparation(
 
     match preparation.kind {
         ActiveAsrProviderKind::Bailian
+        | ActiveAsrProviderKind::Soniox
         | ActiveAsrProviderKind::Qwen3Realtime
         | ActiveAsrProviderKind::StepfunRealtime
         | ActiveAsrProviderKind::Mimo
@@ -530,6 +541,30 @@ async fn build_cloud_transcription_session(
     let endpoint = preparation.endpoint.clone();
     let context = &preparation.context;
     let (kind, label_model) = match preparation.kind {
+        ActiveAsrProviderKind::Soniox => {
+            let effective_model = non_blank_owned(model)
+                .unwrap_or_else(|| crate::asr::soniox::DEFAULT_MODEL.to_string());
+            let endpoint = non_blank_owned(endpoint)
+                .unwrap_or_else(|| crate::asr::soniox::DEFAULT_ENDPOINT.to_string());
+            if !crate::asr::soniox::endpoint_scheme_is_websocket(&endpoint) {
+                return Err(BackendError::new(
+                    BackendErrorCode::InvalidArgument,
+                    "Soniox endpoint must use ws:// or wss://",
+                ));
+            }
+            let terms = context.polish.hotwords.clone();
+            let provider = Arc::new(SonioxStreamingASR::new(SonioxCredentials {
+                api_key,
+                endpoint,
+                model: effective_model.clone(),
+                terms,
+            }));
+            provider.open_session().await.map_err(map_asr_error)?;
+            (
+                CloudTranscriptionSessionKind::Soniox(provider),
+                Some(effective_model),
+            )
+        }
         ActiveAsrProviderKind::Bailian => {
             let stored_endpoint = non_blank_owned(endpoint)
                 .unwrap_or_else(|| crate::asr::bailian::DEFAULT_ENDPOINT.to_string());
