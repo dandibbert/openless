@@ -35,6 +35,7 @@ import {
 import { ChannelEditorHostContext } from '../pages/settings/ChannelEditorHostContext';
 import { ProviderLeaveContext, useProviderForm } from '../pages/settings/ProviderForm';
 import { useContentMotion, useOverlayMotion } from '../lib/motion';
+import { isImeCompositionEvent } from '../lib/imeKeyboard';
 
 export type { SettingsSectionId } from '../pages/settings/navigation';
 
@@ -217,7 +218,7 @@ export function SettingsModal({
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     // Nested selectors and shortcut recorders own their keys before the dialog does.
-    if (event.defaultPrevented || event.nativeEvent.isComposing) return;
+    if (event.defaultPrevented || isImeCompositionEvent(event)) return;
     const nestedPopup = document.querySelector('[role="listbox"], [data-base-ui-portal]');
     const target = event.target instanceof Element ? event.target : null;
     if (nestedPopup || target?.closest('[role="dialog"]') !== surfaceRef.current) return;
