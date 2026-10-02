@@ -2,11 +2,14 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { App } from './App';
 import { SplashVideo } from './components/SplashVideo';
+import { CoreStartupScreen } from './components/CoreStartupScreen';
 import { detectOS } from './components/WindowChrome';
 import { i18nReady } from './i18n';
 import { initThemeMode } from './lib/themeMode';
+import { installEncryptedSyncUiBridge } from './lib/encryptedSyncUiBridge';
 import './styles/tokens.css';
 import './styles/global.css';
+import './styles/overlays.css';
 
 import type { OS } from './components/WindowChrome';
 
@@ -14,12 +17,12 @@ const params = new URLSearchParams(window.location.search);
 const windowKind = params.get('window');
 const isCapsule = windowKind === 'capsule';
 const isQa = windowKind === 'qa';
-const isSelectionPolishPreview = windowKind === 'selection-polish-preview';
 const isSelectionVoiceIntent = windowKind === 'selection-voice-intent';
 const isLessComputer = windowKind === 'less-computer';
 const isLessComputerGlow = windowKind === 'less-computer-glow';
-// 开屏 PV 只属于主窗口（无 ?window= 参数的路由）：胶囊 / QA / Less Computer 等
-// 辅助窗口共用同一份前端产物，但绝不能抢占或重复消费开屏。
+// The splash video belongs to the main window only (routes without ?window=):
+// auxiliary windows (capsule / QA / Less Computer …) share the same frontend bundle
+// but must never claim or double-consume the splash.
 const isMainWindow = !windowKind;
 const osQuery = params.get('os') as OS | null;
 const os = osQuery ?? detectOS();
@@ -35,7 +38,6 @@ const renderApp = () => {
       <App
         isCapsule={isCapsule}
         isQa={isQa}
-        isSelectionPolishPreview={isSelectionPolishPreview}
         isSelectionVoiceIntent={isSelectionVoiceIntent}
         isLessComputer={isLessComputer}
         isLessComputerGlow={isLessComputerGlow}
@@ -46,4 +48,17 @@ const renderApp = () => {
 };
 
 // Mount only after the selected local language chunk is ready; avoid mixed-language startup.
-void i18nReady.then(renderApp);
+void i18nReady
+  .then(async () => {
+    if (isMainWindow) {
+      // Native credential access can wait for an OS prompt before the UI mirror is ready.
+      root.render(<CoreStartupScreen />);
+      await installEncryptedSyncUiBridge().catch(() => {});
+    }
+    renderApp();
+  })
+  .catch((error: unknown) => {
+    root.render(
+      <CoreStartupScreen error={String(error)} compact={isCapsule || isLessComputerGlow} />,
+    );
+  });

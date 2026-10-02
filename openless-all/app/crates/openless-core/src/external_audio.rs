@@ -45,7 +45,7 @@ struct ExternalActiveRecording {
 }
 
 impl ExternalAudioRecorder {
-    /// 与电脑历史记录共用 WAV 目录及保留策略，失败的远程录音也可重新转录。
+    /// Shares the WAV directory and retention policy with desktop history, so failed remote recordings can be re-transcribed.
     pub fn with_recordings_directory(directory: PathBuf) -> Self {
         Self {
             recordings_dir: Some(directory),
@@ -100,7 +100,8 @@ impl AudioRecorder for ExternalAudioRecorder {
                 ))
             });
         }
-        // 在归档创建/清理之前检查重复会话，避免误删仍在录音的文件。
+        // Check for duplicate sessions before archive creation/cleanup, so an
+        // in-progress recording's files are never deleted by mistake.
         let mut sessions = self
             .sessions
             .lock()
@@ -299,8 +300,10 @@ mod tests {
             std::env::temp_dir().join(format!("openless-remote-archive-{}", uuid::Uuid::new_v4()));
         let recorder = ExternalAudioRecorder::with_recordings_directory(directory.clone());
         let id = SessionId::new();
-        let mut context = DictationContext::default();
-        context.audio_source = DictationAudioSource::External;
+        let mut context = DictationContext {
+            audio_source: DictationAudioSource::External,
+            ..DictationContext::default()
+        };
         context.recording.archive_enabled = true;
         let consumer = Arc::new(RecordingConsumer::default());
         let recording = recorder
@@ -356,8 +359,10 @@ mod tests {
             }
             let recorder = ExternalAudioRecorder::with_recordings_directory(directory.clone());
             let id = SessionId::new();
-            let mut context = DictationContext::default();
-            context.audio_source = DictationAudioSource::External;
+            let mut context = DictationContext {
+                audio_source: DictationAudioSource::External,
+                ..DictationContext::default()
+            };
             context.recording.archive_enabled = enabled;
             let consumer = Arc::new(RecordingConsumer::default());
             let recording = recorder
@@ -389,8 +394,10 @@ mod tests {
         std::fs::create_dir_all(&directory).unwrap();
         std::fs::write(directory.join("user.wav"), b"keep").unwrap();
         let recorder = ExternalAudioRecorder::with_recordings_directory(directory.clone());
-        let mut context = DictationContext::default();
-        context.audio_source = DictationAudioSource::External;
+        let mut context = DictationContext {
+            audio_source: DictationAudioSource::External,
+            ..DictationContext::default()
+        };
         context.recording.archive_enabled = true;
         context.recording.max_entries = Some(2);
         for _ in 0..4 {

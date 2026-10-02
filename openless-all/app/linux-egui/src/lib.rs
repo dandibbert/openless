@@ -5,47 +5,124 @@
 //! and semantic events between that backend and the UI.
 
 mod audio;
+mod audio_cue;
+mod audio_mute;
+mod audio_player;
 mod backend;
 mod capabilities;
 mod coding_agent;
 mod credentials;
+mod desktop;
+mod dictation_feedback;
 mod fcitx5;
 mod host_actions;
 mod hotkeys;
-mod marketplace;
+mod i18n;
+pub mod local_hotkeys;
+mod logging;
+mod popup;
+mod popup_layer;
+mod popup_window;
+mod preference_patch;
 mod qa;
+mod recordings;
 mod remote_input;
 mod resources;
 mod runtime;
 mod selection;
 mod settings;
 mod single_instance;
+mod tray;
+mod ui_state;
 
 pub use audio::LinuxCpalRecorder;
+pub use audio_cue::{play_cue_start, play_cue_stop, CueTone};
+pub use audio_mute::AudioMuteGuard;
+pub use audio_player::ClipPlayer;
 pub use backend::{LinuxBackendBuilder, LinuxBackendRuntime};
 pub use capabilities::{LinuxCapabilitySnapshot, LinuxDesktopSession, LinuxPlatformApi};
 pub use credentials::LinuxCredentialStore;
+pub use desktop::{
+    atomic_save, notify, open_external, open_local_file, validate_save_path, AutostartManager,
+    DesktopError, Notification,
+};
+pub use dictation_feedback::{
+    capsule_hide_delay, capsule_hide_is_still_current, capsule_needs_fallback_dismissal,
+    capsule_outcome, is_backend_error_code, is_expected_stop_error, normalize_stop_result,
+    phase_shows_capsule, CapsuleOutcome, CAPSULE_AUTO_HIDE_DELAY_MS,
+};
+#[cfg(target_os = "linux")]
+pub use fcitx5::prepare_fcitx5;
 pub use fcitx5::{
     available as fcitx5_available, commit_text as fcitx5_commit_text,
-    ensure_plugin_installed as ensure_fcitx5_plugin_installed,
-    selection_text as fcitx5_selection_text, set_hotkeys as set_fcitx5_hotkeys,
+    copy_to_clipboard as fcitx5_copy_to_clipboard,
+    ensure_plugin_installed as ensure_fcitx5_plugin_installed, reload_fcitx5_if_plugin_updated,
+    reload_running_fcitx5, selection_text as fcitx5_selection_text,
+    set_hotkeys as set_fcitx5_hotkeys,
     set_less_computer_hotkey_raw as set_fcitx5_less_computer_hotkey_raw, Fcitx5TextInserter,
     FcitxPluginInstallPlan, FcitxPluginStatus,
 };
 pub use host_actions::LinuxHostActions;
+
+/// Apply one QA/selection-voice edit through the same fcitx5 selection target
+/// the `SelectionApi` uses. `session_id` is the selection-voice session the host
+/// registered via `rekey_selection_target`, i.e. the Core's apply ticket
+/// `session_id`. Returns `Cancelled` when the selection changed meanwhile.
+pub fn apply_selection_voice_target(
+    session_id: &str,
+    source: &str,
+    replacement: &str,
+) -> Result<(), openless_core::BackendError> {
+    fcitx5::apply_selection_target(session_id, source, replacement)
+}
 pub use hotkeys::{Fcitx5HotkeyListener, LinuxHotkeyEvent};
+pub use i18n::{fmt_catalog as fmt_l10n, tr_catalog as tr_l10n, Lang, LocalePref, LANGS};
+pub use local_hotkeys::{
+    next_local_press_id, plugin_event_hotkey, style_pack_raw, translation_hotkey_event,
+    HotkeyDeduplicator, LocalHotkey, LocalHotkeyEdge, LocalHotkeyEdgeKind, HOTKEY_DEDUPE_WINDOW,
+};
+pub use logging::{export_error_log, init_file_logger, log_path};
+pub use popup::{
+    force_x11_for, popup_command, read_jsonl, run_popup, write_jsonl,
+    ApplyOutcome as PopupApplyOutcome, CapsulePopupState, HostToPopup, LessComputerApproval,
+    LessComputerEntry, LessComputerPopupState, PopupActionGuard, PopupChatMessage, PopupKind,
+    PopupSendError, PopupState, PopupSupervisor, PopupSupervisorEvent, PopupToHost,
+    ProtocolError as PopupProtocolError, ProtocolErrorKind as PopupProtocolErrorKind,
+    QaPolishState, QaPopupState, MAX_JSONL_LINE_BYTES, POPUP_PROTOCOL_VERSION,
+};
+pub use popup_layer::{
+    capsule_geometry, capsule_path_override, choose_capsule_path, detect_capsule_path,
+    has_layer_shell, layer_shell_available, pointer_events, probe_layer_shell, run_layer_capsule,
+    CapsuleGeometry, CapsulePath, LayerFrame, CAPSULE_PATH_ENV, CONFIGURE_TIMEOUT, LAYER_NAMESPACE,
+    LAYER_SHELL_GLOBAL, MAX_FRAME_PAUSE,
+};
+#[cfg(all(target_os = "linux", feature = "x11-overlay"))]
+pub use popup_window::X11Overlay;
+pub use popup_window::{
+    bottom_center, clamp_to_area, monitor_containing, place_overlay, popup_position, popup_size,
+    select_overlay_window, x11_available, OverlayEnvironment, OverlayPlacement, OverlayX11,
+    WindowCandidate, WindowMatch, X11Rect, CAPSULE_BOTTOM_GAP, CAPSULE_WINDOW_SIZE,
+    LESS_COMPUTER_WINDOW_SIZE, QA_WINDOW_SIZE,
+};
+
+pub use openless_core::contract::*;
+pub use preference_patch::patch_preferences;
+pub use recordings::{read_recording_wav, recording_path, recording_pcm, RecordingError};
 pub use resources::{
     LinuxPackageKind, LinuxResourceLayout, LinuxResourceResolver, FCITX_PLUGIN_CONFIG,
     FCITX_PLUGIN_LIBRARY,
 };
 pub use runtime::{LinuxNativeRuntime, LinuxRuntimePumpResult};
 pub use selection::LinuxSelectionRuntime;
-pub use settings::{LinuxSettingsEffects, LinuxSettingsRuntime};
+pub use settings::{is_bare_modifier_binding, LinuxSettingsEffects, LinuxSettingsRuntime};
 pub use single_instance::{
     LinuxLaunchIntent, SingleInstanceBroker, SingleInstanceGuard, SingleInstanceRole,
 };
-
-pub use openless_core::contract::*;
+pub use tray::{LinuxTray, TrayCommand, TrayError, TrayMicrophone};
+pub use ui_state::{
+    load_locale_pref, load_quick_note_shortcut_hidden, save_locale_pref,
+    save_quick_note_shortcut_hidden, ui_state_dir, ui_state_path, UiStateError,
+};
 
 /// Coordinates Core operations with Linux settings and recording lifecycles.
 ///
@@ -339,11 +416,16 @@ impl LinuxHost {
                 .dispatch_dictation_hotkey_edge(DictationHotkeyEdge::Combined { press_id, at })
                 .await
                 .map(Some),
-            LinuxHotkeyEvent::QaPressed => self
-                .backend
-                .dispatch_cli_intent(CliIntent::ToggleQa)
-                .await
-                .map(Some),
+            LinuxHotkeyEvent::QuickNotePressed => Ok(None), // Host toggles the permanent recording.
+            LinuxHotkeyEvent::QaPressed => {
+                // 用户报「选区助手快捷键打不开」时，这一行 + 宿主的 ShowQa/HideQa
+                // 日志能直接区分「键没到」和「到了但被隐藏」。
+                log::info!("[hotkey] selection-ask hotkey pressed; toggling the QA panel");
+                self.backend
+                    .dispatch_cli_intent(CliIntent::ToggleQa)
+                    .await
+                    .map(Some)
+            }
             LinuxHotkeyEvent::SelectionPolishPressed => {
                 let preferences = self.backend.get_preferences();
                 let style_pack = self
@@ -360,11 +442,40 @@ impl LinuxHost {
                     .await?;
                 Ok(None)
             }
-            LinuxHotkeyEvent::TranslationPressed => {
+            LinuxHotkeyEvent::TranslationPressed { .. } => {
                 if self.backend.snapshot().dictation.phase == DictationPhase::Idle {
                     self.translation_pending
                         .store(true, std::sync::atomic::Ordering::Release);
                 }
+                Ok(None)
+            }
+            LinuxHotkeyEvent::SwitchStylePressed => {
+                self.backend.activate_previous_style_pack()?;
+                Ok(None)
+            }
+            LinuxHotkeyEvent::OpenAppPressed => {
+                self.backend.request_host_action(HostAction::ShowMain)?;
+                self.backend.request_host_action(HostAction::FocusMain)?;
+                Ok(None)
+            }
+            LinuxHotkeyEvent::StylePackPressed { symbol, states } => {
+                let preferences = self.backend.get_preferences();
+                let pack_id = preferences
+                    .style_pack_hotkeys
+                    .iter()
+                    .find_map(|hotkey| {
+                        crate::settings::shortcut_to_raw(&hotkey.binding)
+                            .ok()
+                            .filter(|raw| *raw == (symbol, states))
+                            .map(|_| hotkey.pack_id.clone())
+                    })
+                    .ok_or_else(|| {
+                        BackendError::new(
+                            BackendErrorCode::Cancelled,
+                            "style-pack hotkey no longer matches current settings",
+                        )
+                    })?;
+                self.backend.activate_style_pack(&pack_id)?;
                 Ok(None)
             }
         }
@@ -421,39 +532,6 @@ impl LinuxHost {
             LessComputerHotkeyAction::Noop => {}
         }
         Ok(None)
-    }
-
-    /// Feed one canonical PCM frame from the Linux cpal callback into the
-    /// active Less Computer voice session.
-    pub fn feed_less_computer_pcm(&self, pcm: &[u8]) -> Result<(), BackendError> {
-        self.less_computer_voice
-            .lock()
-            .expect("Linux Less Computer voice lock poisoned")
-            .session
-            .as_ref()
-            .ok_or_else(|| {
-                BackendError::new(
-                    BackendErrorCode::InvalidState,
-                    "Less Computer voice session is not active",
-                )
-            })?
-            .feed_pcm(pcm)
-    }
-
-    /// Download a Core-validated Marketplace archive and save it to a user-selected
-    /// Linux filesystem path without exposing HTTP, OAuth or archive validation to UI code.
-    pub async fn download_marketplace_archive(
-        &self,
-        pack_id: String,
-        target: std::path::PathBuf,
-    ) -> Result<(), BackendError> {
-        let bytes = self
-            .backend
-            .services()
-            .marketplace
-            .download_archive(pack_id)
-            .await?;
-        marketplace::write_archive(&target, &bytes)
     }
 }
 

@@ -39,7 +39,7 @@ pub struct LocalAsrSettings {
     pub mirror: String,
     pub models_base_dir: Option<String>,
     pub models_root_dir: String,
-    /// macOS/Linux 编入本地 Qwen3-ASR C 引擎；MLX 仅在 macOS 可用。
+    /// 本地 Qwen3-ASR C 引擎仅在 macOS 编入；Apple Silicon 另可用 MLX。
     pub engine_available: bool,
 }
 
@@ -76,12 +76,13 @@ impl From<openless_core::LocalAsrStorageSettings> for LocalAsrStorageSettings {
     }
 }
 
-/// 与 Sherpa `SherpaCatalogWire` 对齐：透出展示名、家族、模式、语言与远端尺寸，
-/// 前端无需再为基础元数据实时访问 HuggingFace。
+/// Aligned with Sherpa's `SherpaCatalogWire`: exposes display name, family, mode, languages and
+/// remote sizes so the frontend no longer hits HuggingFace at runtime for basic metadata.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalAsrModelStatus {
     pub id: String,
+    pub runtime: LocalAsrRuntime,
     pub hf_repo: String,
     pub display_name: String,
     pub family: String,
@@ -96,6 +97,7 @@ impl From<openless_core::LocalAsrModel> for LocalAsrModelStatus {
     fn from(model: openless_core::LocalAsrModel) -> Self {
         Self {
             id: model.target.model_id().to_string(),
+            runtime: model.target.runtime,
             hf_repo: model.repository.clone().unwrap_or_default(),
             display_name: model.display_name,
             family: model.family,
@@ -287,7 +289,7 @@ pub async fn local_asr_list_models(
         .map_err(core_error)
 }
 
-/// 实时读取模型文件清单与总尺寸，避免前端硬编码远端元数据。
+/// Fetch the model file list and total size live, so the frontend never hardcodes remote metadata.
 #[tauri::command]
 pub async fn local_asr_fetch_remote_info(
     backend: CoreState<'_>,
@@ -367,7 +369,7 @@ pub async fn local_asr_delete_model(
         .map_err(core_error)
 }
 
-/// 清理指定模型中断下载遗留的 staging 目录，不触碰已安装模型。
+/// Clean up staging directories left by interrupted downloads of a model; installed models are untouched.
 #[tauri::command]
 pub async fn local_asr_cleanup_incomplete(
     backend: CoreState<'_>,
@@ -436,8 +438,9 @@ pub async fn local_asr_test_model(
         .map_err(core_error)
 }
 
-/// 验证设置页上的本地渠道。与通用云端 provider 验证不同，这里必须真正
-/// 加载该渠道对应的本地模型并跑一次内置音频，且不能偷偷切换全局 active 渠道。
+/// Verify a local channel from the settings page. Unlike generic cloud provider verification,
+/// this must actually load the channel's local model and run a built-in audio sample, and it
+/// must never silently switch the global active channel.
 #[tauri::command]
 pub async fn local_asr_test_channel(
     backend: CoreState<'_>,
@@ -569,6 +572,7 @@ mod wire_contract_tests {
             value,
             serde_json::json!({
                 "id": "qwen3-asr-0.6b",
+                "runtime": "generic",
                 "hfRepo": "Qwen/Qwen3-ASR-0.6B",
                 "displayName": "Qwen3 ASR 0.6B",
                 "family": "qwen3_asr",

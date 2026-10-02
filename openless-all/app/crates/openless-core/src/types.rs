@@ -56,6 +56,7 @@ impl PolishMode {
 pub enum HistorySource {
     #[default]
     Voice,
+    QuickNote,
     SelectionPolish,
     SelectionVoiceEdit,
 }
@@ -186,6 +187,7 @@ pub enum SelectionVoiceManualIntent {
     #[default]
     Question,
     Edit,
+    Compose,
 }
 
 impl std::fmt::Display for SessionId {

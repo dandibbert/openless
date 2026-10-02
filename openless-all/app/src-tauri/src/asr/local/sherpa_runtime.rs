@@ -1,13 +1,13 @@
 #![allow(dead_code, unused_imports, unused_variables)]
-//! sherpa-onnx 本地 ASR runtime（Windows offline batch + online streaming）。
+//! sherpa-onnx local ASR runtime (Windows offline batch + online streaming).
 //!
-//! 设计与 `foundry_runtime.rs` 对齐：runtime 是模型/会话/生命周期的单一持有者，
-//! 不感知 `Coordinator` / `Recorder` / UI / Tauri 事件。失败统一通过
-//! `anyhow::Error` 上抛，由上层翻译为用户可见文案。
+//! Designed like `foundry_runtime.rs`: the runtime is the single owner of models, sessions and
+//! lifecycle, unaware of `Coordinator` / `Recorder` / UI / Tauri events. Failures propagate as
+//! `anyhow::Error` for the upper layer to translate into user-visible text.
 //!
-//! 当前 Windows 路径接入 `sherpa-onnx` 的 `OfflineRecognizer` 和
-//! `OnlineRecognizer`，支持模型加载、缓存、整段 PCM 转写、online 分块解码和释放。
-//! 非 Windows 仍只保留可编译的状态门面。
+//! The Windows path currently wires in sherpa-onnx's `OfflineRecognizer` and
+//! `OnlineRecognizer`, supporting model loading, caching, whole-PCM transcription, online
+//! chunked decoding and release. Non-Windows keeps only a compilable status facade.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,6 +17,9 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
 use tokio::sync::Mutex as AsyncMutex;
+
+#[cfg(target_os = "windows")]
+use super::blocking_decode::run_serialized_decode;
 
 use crate::asr::local::sherpa::{
     SherpaPreparePhase, SherpaPrepareProgressPayload, SherpaRuntimeStatus, PROVIDER_ID,
@@ -32,16 +35,18 @@ use sherpa_onnx::{
     OnlineRecognizer, OnlineRecognizerConfig,
 };
 
-/// Offline 模型加载状态。Windows 持有 native `OfflineRecognizer`；其他平台仅保留 alias
-/// 以维持跨平台编译与状态查询形状。
+/// Offline model load state. Windows holds the native `OfflineRecognizer`; other platforms keep
+/// only the alias to preserve cross-platform compilation and the status-query shape.
 #[derive(Clone)]
 struct LoadedOfflineModel {
     alias: String,
     #[cfg(target_os = "windows")]
     recognizer: Arc<OfflineRecognizer>,
+    #[cfg(target_os = "windows")]
+    decode_gate: Arc<tokio::sync::Semaphore>,
 }
 
-/// Online 模型加载状态。每次听写会话会从 recognizer 创建独立 `OnlineStream`。
+/// Online model load state. Each dictation session creates its own `OnlineStream` from the recognizer.
 #[derive(Clone)]
 struct LoadedOnlineModel {
     alias: String,
@@ -64,7 +69,8 @@ struct RuntimeDiagnostics {
     last_error: Option<String>,
 }
 
-/// 跨会话单例。生命周期由 `AsyncMutex` 串行化，确保 ensure_loaded / release 不会并发。
+/// Cross-session singleton. The lifecycle is serialized by an `AsyncMutex` so ensure_loaded /
+/// release never run concurrently.
 pub struct SherpaOnnxRuntime {
     lifecycle: AsyncMutex<()>,
     cancel_prepare: AtomicBool,
@@ -86,8 +92,8 @@ impl SherpaOnnxRuntime {
         }
     }
 
-    /// 返回当前 runtime 是否真的具备推理能力。当前仅 Windows 接入
-    /// `sherpa-onnx` offline recognizer。
+    /// Whether the runtime actually has inference capability today. Only Windows currently
+    /// wires in the `sherpa-onnx` offline recognizer.
     #[allow(dead_code)]
     pub fn is_available(&self) -> bool {
         cfg!(target_os = "windows")
@@ -214,8 +220,9 @@ impl SherpaOnnxRuntime {
         Ok(alias.to_string())
     }
 
-    /// Windows 下用已加载的 `OfflineRecognizer` 做整段 PCM batch 转写；非 Windows
-    /// 保持空实现，避免把 sherpa provider 暴露为可用推理能力。
+    /// On Windows, whole-PCM batch transcription via the loaded `OfflineRecognizer`; non-Windows
+    /// keeps an empty implementation so the sherpa provider never appears as an available
+    /// inference capability.
     #[allow(dead_code)]
     pub async fn transcribe_pcm(
         &self,
@@ -283,8 +290,8 @@ impl SherpaOnnxRuntime {
         result
     }
 
-    /// 创建独立 online 解码 session。调用者负责按 Recorder PCM chunk 喂入，
-    /// 并在停止录音时调用 `finish()` 刷出 final text。
+    /// Create an independent online decoding session. The caller feeds it Recorder PCM chunks
+    /// and calls `finish()` when recording stops to flush the final text.
     pub async fn create_online_session(
         &self,
         alias: &str,
@@ -323,8 +330,9 @@ impl SherpaOnnxRuntime {
         Ok(())
     }
 
-    /// 自动收尾只释放仍属于本次使用的实例。代次在生命周期锁内复核，避免
-    /// 定时器等待旧推理结束期间，误清掉用户刚切换或新会话刚加载的模型。
+    /// Auto teardown releases only instances still belonging to this use. The generation is
+    /// re-checked inside the lifecycle lock so a timer waiting for old inference to finish can't
+    /// clear a model the user just switched to or a new session just loaded.
     pub(crate) async fn release_if_generation(
         &self,
         generation: &std::sync::atomic::AtomicU64,
@@ -460,6 +468,7 @@ async fn load_model(alias: &str, dir: &Path) -> Result<LoadedModel> {
                 Ok(LoadedModel::Offline(LoadedOfflineModel {
                     alias,
                     recognizer: Arc::new(recognizer),
+                    decode_gate: Arc::new(tokio::sync::Semaphore::new(1)),
                 }))
             }
             Some(openless_core::LocalAsrExecutionMode::Online) => {
@@ -592,10 +601,15 @@ async fn transcribe_loaded_model(
     language_hint: Option<String>,
     audio_timeout: std::time::Duration,
 ) -> Result<String> {
-    tokio::time::timeout(audio_timeout, async move {
-        tokio::task::spawn_blocking(move || {
+    run_serialized_decode(
+        Arc::clone(&loaded.decode_gate),
+        audio_timeout,
+        move |cancelled| {
             let mut texts = Vec::with_capacity(pcm_chunks.len());
             for pcm in pcm_chunks {
+                if cancelled.load(Ordering::Acquire) {
+                    anyhow::bail!("sherpa-onnx transcribe cancelled");
+                }
                 let samples = pcm_s16le_to_f32(&pcm)?;
                 let stream = loaded.recognizer.create_stream();
                 if let Some(language) = language_hint.as_deref().filter(|value| !value.is_empty()) {
@@ -611,12 +625,9 @@ async fn transcribe_loaded_model(
                 texts.push(result.text);
             }
             Ok(openless_core::asr::whisper::join_transcript_chunks(&texts))
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("sherpa-onnx transcribe join failed: {e:#}"))?
-    })
+        },
+    )
     .await
-    .map_err(|_| anyhow::anyhow!("sherpa-onnx transcribe timeout"))?
 }
 
 #[cfg(not(target_os = "windows"))]

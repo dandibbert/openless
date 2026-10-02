@@ -209,13 +209,12 @@ use tokio_rustls::TlsAcceptor;
 
 #[cfg(target_os = "linux")]
 mod assets {
-    pub const INDEX_HTML: &str =
-        include_str!("../../src-tauri/src/remote_server/assets/index.html");
-    pub const APP_JS: &str = include_str!("../../src-tauri/src/remote_server/assets/app.js");
-    pub const STYLE_CSS: &str = include_str!("../../src-tauri/src/remote_server/assets/style.css");
-    pub const ICON_PNG: &[u8] = include_bytes!("../../src-tauri/src/remote_server/assets/icon.png");
-    pub const MIC_PNG: &[u8] = include_bytes!("../../src-tauri/src/remote_server/assets/mic.png");
-    pub const DONE_PNG: &[u8] = include_bytes!("../../src-tauri/src/remote_server/assets/done.png");
+    pub const INDEX_HTML: &str = include_str!("../../assets/remote-input/index.html");
+    pub const APP_JS: &str = include_str!("../../assets/remote-input/app.js");
+    pub const STYLE_CSS: &str = include_str!("../../assets/remote-input/style.css");
+    pub const ICON_PNG: &[u8] = include_bytes!("../../assets/remote-input/icon.png");
+    pub const MIC_PNG: &[u8] = include_bytes!("../../assets/remote-input/mic.png");
+    pub const DONE_PNG: &[u8] = include_bytes!("../../assets/remote-input/done.png");
 }
 
 #[cfg(target_os = "linux")]
@@ -307,7 +306,7 @@ fn access_urls(port: u16) -> Vec<String> {
 }
 
 #[cfg(target_os = "linux")]
-#[path = "../../src-tauri/src/remote_server/tls_identity.rs"]
+#[path = "../../shared/remote_tls/tls_identity.rs"]
 mod tls_identity;
 
 #[cfg(target_os = "linux")]
@@ -567,7 +566,8 @@ async fn websocket_session(mut socket: WebSocket, state: Arc<WebState>, peer: Ip
                         phase: openless_core::DictationPhase::Cancelled | openless_core::DictationPhase::Failed, ..
                     }));
                 for reply in remote_event(event.kind) {
-                    // 下行失败也保留已收到的录音，由外层继续完成识别和持久化。
+                    // Keep the recording already received even if a downstream send fails; the
+                    // outer loop continues transcription and persistence.
                     if socket.send(json_message(reply)).await.is_err() {
                         break 'connection;
                     }

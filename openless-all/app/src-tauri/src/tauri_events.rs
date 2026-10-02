@@ -60,7 +60,19 @@ pub fn start(app: AppHandle, backend: Arc<OpenLessBackend>) {
             log::error!("[core-events] backend start failed: {error}");
             return;
         }
+        if backend.ensure_runtime_ready().is_err() {
+            return;
+        }
         let preferences = backend.get_preferences();
+        #[cfg(target_os = "windows")]
+        {
+            let target = openless_core::WindowsKeyboardRuntimeTarget::from(&preferences);
+            if let Err(error) = crate::windows_ime_profile::apply_windows_openless_keyboard_list(
+                target.openless_language_profile_enabled,
+            ) {
+                log::warn!("[windows-ime] startup keyboard visibility failed: {error}");
+            }
+        }
         if let Err(error) = backend
             .services()
             .remote_input
@@ -136,6 +148,16 @@ async fn forward_legacy_event(
     }
     match kind {
         BackendEventKind::PreferencesChanged(_) => emit_preferences(app, backend),
+        BackendEventKind::CloudSyncStateChanged(event) => {
+            let _ = app.emit_to("main", "cloud-sync-e2ee:state", event);
+        }
+        BackendEventKind::CloudSyncConflictDetected(event) => {
+            let _ = app.emit_to("main", "cloud-sync-e2ee:conflict", event);
+        }
+        BackendEventKind::CloudSyncRestoreCompleted(event) => {
+            emit_preferences(app, backend);
+            let _ = app.emit_to("main", "cloud-sync-e2ee:restored", event);
+        }
         BackendEventKind::CredentialsChanged(status) => {
             let _ = app.emit("credentials:changed", status);
         }
@@ -150,6 +172,9 @@ async fn forward_legacy_event(
                 capsule_owners.qa_voice = None;
                 capsule_owners.qa_capsule = None;
             }
+            if selection_voice_blocks_dictation_capsule(app) {
+                return;
+            }
             emit_dictation_state(app, backend, snapshot)
         }
         BackendEventKind::TranscriptDelta(_) => {}
@@ -157,6 +182,9 @@ async fn forward_legacy_event(
             capsule_owners.transcription_notice = None;
             capsule_owners.qa_voice = None;
             capsule_owners.qa_capsule = None;
+            if selection_voice_blocks_dictation_capsule(app) {
+                return;
+            }
             if let Some(coordinator) = app.try_state::<Arc<crate::coordinator::Coordinator>>() {
                 let message = match &result.inserted {
                     openless_core::DictationInsertStatus::Inserted => "已输入",
@@ -220,9 +248,12 @@ async fn forward_legacy_event(
                 phase,
                 level,
                 elapsed_ms,
+                ..
             } = &event.kind
             {
-                // 胶囊只展示Core语音快照。已开始的其它会话拥有共享窗口，旧Less终态不得盖掉它。
+                // The capsule shows only the Core voice snapshot. Other sessions that already
+                // started own the shared window, and an older session's terminal state must not
+                // overwrite it.
                 let current = backend.less_computer_active_session();
                 if !current.is_some_and(|current| current != *session_id)
                     && backend.snapshot().dictation.phase == DictationPhase::Idle
@@ -304,8 +335,27 @@ async fn forward_legacy_event(
             let _ = app.emit_to(
                 crate::coordinator::qa_event_target(),
                 "qa:level",
-                serde_json::json!({ "level": level.level }),
+                serde_json::json!({ "sessionId": level.session_id, "level": level.level }),
             );
+        }
+        BackendEventKind::SelectionVoiceLevel(level) => {
+            if let Some(coordinator) = app.try_state::<Arc<crate::coordinator::Coordinator>>() {
+                if coordinator.selection_voice_accepts_level(&level.session_id) {
+                    coordinator.present_core_capsule(CapsulePayload {
+                        state: CapsuleState::Recording,
+                        level: level.level,
+                        elapsed_ms: level.elapsed_ms,
+                        message: None,
+                        inserted_chars: None,
+                        translation: false,
+                        operating: false,
+                        // First PCM frame proves capture is live (mirrors QA / Less Computer).
+                        warming: false,
+                        capsule_style: backend.get_preferences().capsule_style,
+                        selection_polish: false,
+                    });
+                }
+            }
         }
         BackendEventKind::QaState(state) => {
             let _ = app.emit_to(crate::coordinator::qa_event_target(), "qa:state", state);
@@ -368,7 +418,12 @@ async fn forward_legacy_event(
         BackendEventKind::RemoteInputFailed(error) => {
             let _ = app.emit("remote-input:error", error);
         }
-        BackendEventKind::VocabularySuggestionsChanged(suggestions) => {
+        BackendEventKind::VocabularySuggestionsChanged(_) => {
+            // Concurrent producers can enqueue an older snapshot after a
+            // dismissal. Present current Core state, never resurrect that card.
+            let suggestions = backend.pending_corrections();
+            #[cfg(target_os = "android")]
+            crate::android::edit_observation::show_suggestions(&suggestions);
             if let Some(coordinator) = app.try_state::<Arc<crate::coordinator::Coordinator>>() {
                 coordinator.refresh_vocab_suggestion_presentation(!suggestions.is_empty());
             }
@@ -396,6 +451,9 @@ fn emit_dictation_state(
     if snapshot.phase == DictationPhase::Completed {
         return;
     }
+    if selection_voice_blocks_dictation_capsule(app) {
+        return;
+    }
     let payload = map_dictation_state(snapshot, backend.get_preferences().capsule_style);
     if let Some(coordinator) = app.try_state::<Arc<crate::coordinator::Coordinator>>() {
         coordinator.present_core_capsule(payload);
@@ -409,6 +467,11 @@ fn emit_dictation_state(
     }
     #[cfg(target_os = "android")]
     crate::android::notify_capsule_state(&payload);
+}
+
+fn selection_voice_blocks_dictation_capsule(app: &AppHandle) -> bool {
+    app.try_state::<Arc<crate::coordinator::Coordinator>>()
+        .is_some_and(|coordinator| coordinator.selection_voice_owns_capsule())
 }
 
 fn map_dictation_state(
@@ -1237,6 +1300,9 @@ mod tests {
                 phase: openless_core::LessComputerVoicePhase::Transcribing,
                 level: 0.0,
                 elapsed_ms: 456,
+                mode: openless_core::LessComputerVoiceMode::Submit,
+                transcript: String::new(),
+                outcome: None,
             },
         };
         let payload = transcription_notice_payload(
@@ -1477,6 +1543,7 @@ fn migration_legacy_event_name(kind: &BackendEventKind) -> Option<&'static str> 
         BackendEventKind::MicrophoneDevicesChanged => Some("microphone:devices-changed"),
         BackendEventKind::QaLevel(_) => Some("qa:level"),
         BackendEventKind::QaState(_) => Some("qa:state"),
+        BackendEventKind::SelectionVoiceLevel(_) => None,
         BackendEventKind::RemoteInputStatusChanged(_) => Some("remote-input:running"),
         BackendEventKind::RemoteInputFailed(_) => Some("remote-input:error"),
         BackendEventKind::VocabularySuggestionsChanged(_) => Some("vocab:suggested"),

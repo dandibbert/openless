@@ -1,13 +1,15 @@
-//! 腾讯云实时语音识别 WebSocket 客户端。
+//! Tencent Cloud realtime speech recognition WebSocket client.
 //!
-//! 官方文档：https://cloud.tencent.com/document/api/1093/48982
+//! Official docs: https://cloud.tencent.com/document/api/1093/48982
 //!
-//! 协议要点：
-//! - 端点：`wss://asr.cloud.tencent.com/asr/v2/<appid>`；
-//! - 鉴权：查询参数按字典序拼接后，以 SecretKey 做 HMAC-SHA1，再 Base64；
-//! - 音频：16 kHz / 16-bit / 单声道 PCM，每 200ms 发送 6400 bytes；
-//! - 收尾：发送文本消息 `{"type":"end"}`，等待 `final=1`；
-//! - 默认模型：`Hy-ASR-3.0-preview`（腾讯云当前最新混元 ASR Preview）。
+//! Protocol highlights:
+//! - Endpoint: `wss://asr.cloud.tencent.com/asr/v2/<appid>`;
+//! - Auth: query parameters sorted and concatenated, HMAC-SHA1 with the
+//!   SecretKey, then Base64;
+//! - Audio: 16 kHz / 16-bit / mono PCM, 6400 bytes every 200ms;
+//! - Finish: send the text message `{"type":"end"}` and wait for `final=1`;
+//! - Default model: `Hy-ASR-3.0-preview` (Tencent Cloud's latest Hunyuan ASR
+//!   Preview at the time of writing).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -409,32 +411,24 @@ impl TencentCloudStreamingASR {
             .get("slice_type")
             .and_then(Value::as_i64)
             .unwrap_or(1);
-        let mut state = self.state.lock();
-        state.last_result_text = text.to_string();
-        let mut delta = None;
-        if slice_type == 2 {
-            state.final_segments.insert(index, text.to_string());
-            state.partial_segments.remove(&index);
-        } else {
-            let previous = state
-                .partial_segments
-                .get(&index)
-                .map(String::as_str)
-                .unwrap_or("");
-            delta = text
-                .strip_prefix(previous)
-                .filter(|suffix| !suffix.is_empty())
-                .map(str::to_string);
-            state.partial_segments.insert(index, text.to_string());
-        }
-        drop(state);
-        if let Some(delta) = delta {
-            if let Some(sink) = self.partial_sink.lock().clone() {
-                let _ = sink.publish(TextStreamChunk {
-                    text: delta,
-                    offset: 0,
-                });
+        let snapshot = {
+            let mut state = self.state.lock();
+            state.last_result_text = text.to_string();
+            if slice_type == 2 {
+                state.final_segments.insert(index, text.to_string());
+                state.partial_segments.remove(&index);
+            } else {
+                state.partial_segments.insert(index, text.to_string());
             }
+            let mut segments = state.partial_segments.clone();
+            segments.extend(state.final_segments.clone());
+            super::mimo::join_transcript_chunks(&segments.into_values().collect::<Vec<_>>())
+        };
+        if let Some(sink) = self.partial_sink.lock().clone() {
+            let _ = sink.publish(TextStreamChunk {
+                text: snapshot,
+                offset: 0,
+            });
         }
     }
 
@@ -651,6 +645,34 @@ fn classify_server_error(code: i64) -> TencentCloudASRError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transcript_snapshots_keep_prefix_and_recognition_corrections() {
+        let asr = TencentCloudStreamingASR::new(credentials());
+        let sink = Arc::new(super::super::TranscriptCapture::default());
+        asr.set_partial_sink(sink.clone());
+        for (id, text, final_result) in [
+            (0, "你", false),
+            (0, "你好", false),
+            (0, "您好", false),
+            (0, "您好。", true),
+            (1, "世", false),
+            (1, "世界", false),
+            (1, "世界！", true),
+        ] {
+            asr.record_result(&serde_json::json!({"index": id, "voice_text_str": text, "slice_type": if final_result {2} else {1}}));
+        }
+        sink.assert_snapshots(&[
+            "你",
+            "你好",
+            "您好",
+            "您好。",
+            "您好。世",
+            "您好。世界",
+            "您好。世界！",
+        ]);
+    }
+
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct DelayedFirstSpawner {

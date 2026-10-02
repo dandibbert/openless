@@ -29,7 +29,25 @@ class OpenLessOverlayService : Service(), OpenLessOverlayBridge.OverlayStateList
     private var windowManager: WindowManager? = null
     private var rootView: FrameLayout? = null
     private var layoutParams: WindowManager.LayoutParams? = null
+    // Custom setter, not a plain field: tryPromoteRecordingForeground()
+    // posts the FOREGROUND_SERVICE_TYPE_MICROPHONE "录音中" notification
+    // Android requires while actually recording in the background, but
+    // there used to be exactly one place that tore it back down
+    // (ACTION_HIDE, i.e. only when the whole overlay is dismissed) — every
+    // other path that ends a recording (onCapsuleStateChanged()'s
+    // "transcribing"/"polishing"/"done"/"error"/"cancelled"/"idle"
+    // branches, stopRecordingFromOverlay(), the error branches in
+    // beginDictationFromOverlay()/stopRecordingFromOverlay()) just flipped
+    // this flag to false and left the notification up — which is exactly
+    // the "stuck showing 录音中 even when nothing is recording" bug this
+    // catches structurally: demoting on every true->false transition here
+    // means no call site can forget to do it, present or future.
     private var recording = false
+        set(value) {
+            val wasRecording = field
+            field = value
+            if (wasRecording && !value) demoteFromRecordingForeground()
+        }
     private var processing = false
     private var keyboardVisible = false
     private var armed = false
@@ -49,6 +67,23 @@ class OpenLessOverlayService : Service(), OpenLessOverlayBridge.OverlayStateList
 
     override fun onCreate() {
         super.onCreate()
+        // #region agent log
+        // Overlay mode must register its own Service Context: RuntimeService only
+        // lives while the IME is active, so pure-floating-window dictation otherwise
+        // hits "no live Android Activity context registered" on every capsule notify.
+        runCatching {
+            OpenLessNative.nativeRegisterActivityContext(this)
+            android.util.Log.i(
+                "OpenLessDbg58c22b",
+                """{"sessionId":"58c22b","hypothesisId":"A","location":"OpenLessOverlayService.onCreate","message":"registered overlay service context","data":{"hasCtx":${OpenLessNative.nativeHasRegisteredActivityContext()}},"timestamp":${System.currentTimeMillis()}}""",
+            )
+        }.onFailure { error ->
+            android.util.Log.w(
+                "OpenLessDbg58c22b",
+                """{"sessionId":"58c22b","hypothesisId":"A","location":"OpenLessOverlayService.onCreate","message":"overlay register failed","data":{"error":"${error.message}"},"timestamp":${System.currentTimeMillis()}}""",
+            )
+        }
+        // #endregion
         try {
             OpenLessNative.requireBackendContract()
         } catch (error: Throwable) {
@@ -66,7 +101,7 @@ class OpenLessOverlayService : Service(), OpenLessOverlayBridge.OverlayStateList
             "onStartCommand action=${intent?.action} startId=$startId rootAttached=${rootView?.isAttachedToWindow}",
         )
         when (intent?.action) {
-            ACTION_SHOW -> showOverlay()
+            null, ACTION_SHOW -> showOverlay()
             ACTION_START_RECORDING -> {
                 showOverlay()
                 if (!tryPromoteRecordingForeground()) {
@@ -77,11 +112,7 @@ class OpenLessOverlayService : Service(), OpenLessOverlayBridge.OverlayStateList
             }
             ACTION_HIDE -> {
                 hideOverlay()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                } else {
-                    @Suppress("DEPRECATION") stopForeground(true)
-                }
+                demoteFromRecordingForeground()
                 stopSelf(startId)
             }
             ACTION_REPLACE_OVERLAY -> replaceOverlay()
@@ -100,12 +131,20 @@ class OpenLessOverlayService : Service(), OpenLessOverlayBridge.OverlayStateList
         if (instance === this) {
             instance = null
         }
-        // 系统杀死前台服务时也会走到这里：同步原生 OVERLAY_VISIBLE=false，避免状态永久残留为 true。
+        // Also reached when the system kills the foreground service: sync native OVERLAY_VISIBLE=false so the state never sticks at true.
         runCatching { OpenLessNative.nativeNotifyOverlayDestroyed() }
+        // #region agent log
+        android.util.Log.i(
+            "OpenLessDbg58c22b",
+            """{"sessionId":"58c22b","hypothesisId":"A","location":"OpenLessOverlayService.onDestroy","message":"unregistering overlay service context","timestamp":${System.currentTimeMillis()}}""",
+        )
+        runCatching { OpenLessNative.nativeUnregisterActivityContext(this) }
+        runCatching { OpenLessNative.nativeRegisterActivityContext(applicationContext) }
+        // #endregion
         super.onDestroy()
     }
 
-    override fun onCapsuleStateChanged(state: String, message: String?) {
+    override fun onCapsuleStateChanged(state: String, message: String?, level: Float) {
         when (state) {
             "recording" -> {
                 recording = true
@@ -436,7 +475,7 @@ class OpenLessOverlayService : Service(), OpenLessOverlayBridge.OverlayStateList
                     if (
                         recording &&
                             verticalSwipe != null &&
-                            matchesConfiguredCancelSwipe(verticalSwipe) &&
+                            gestureAction(verticalSwipe) != "none" &&
                             !swipeConsumed
                     ) {
                         pendingSwipe = verticalSwipe
@@ -448,6 +487,7 @@ class OpenLessOverlayService : Service(), OpenLessOverlayBridge.OverlayStateList
                     if (
                         (recording || armed || longPressRecording) &&
                             swipe != null &&
+                            gestureAction(swipe) != "none" &&
                             !swipeConsumed
                     ) {
                         pendingSwipe = swipe
@@ -574,33 +614,38 @@ class OpenLessOverlayService : Service(), OpenLessOverlayBridge.OverlayStateList
         return if (dy < 0) SwipeDirection.Up else SwipeDirection.Down
     }
 
-    private fun matchesConfiguredCancelSwipe(direction: SwipeDirection): Boolean {
-        val configured = OpenLessAndroidPreferences.overlayCancelSwipeDirection(this)
-        return (direction == SwipeDirection.Up && configured == "up") ||
-            (direction == SwipeDirection.Down && configured == "down")
+    private fun gestureAction(direction: SwipeDirection): String {
+        return OpenLessAndroidPreferences.overlayGestureAction(this, direction.name.lowercase())
     }
 
     private fun applySwipePreview(direction: SwipeDirection) {
-        when (direction) {
-            SwipeDirection.Left -> applyVisualState(OverlayVisualState.Armed)
-            SwipeDirection.Right -> applyVisualState(OverlayVisualState.Processing)
-            SwipeDirection.Up,
-            SwipeDirection.Down -> applyVisualState(OverlayVisualState.Error)
+        when (gestureAction(direction)) {
+            "quick_note",
+            "translation",
+            "style_pack" -> applyVisualState(OverlayVisualState.Processing)
+            "qa" -> applyVisualState(OverlayVisualState.Processing)
+            "cancel" -> applyVisualState(OverlayVisualState.Error)
+            else -> Unit
         }
     }
 
     private fun commitSwipe(direction: SwipeDirection) {
         Log.i(TAG, "commit swipe direction=$direction recording=$recording processing=$processing")
-        when (direction) {
-            SwipeDirection.Left -> handleLeftSwipe()
-            SwipeDirection.Right -> finalizeQaFromOverlay()
-            SwipeDirection.Up,
-            SwipeDirection.Down -> cancelRecordingFromOverlay(direction)
+        when (gestureAction(direction)) {
+            "quick_note" -> stopQuickNoteFromOverlay()
+            "translation" -> stopRecordingFromOverlay(translation = true)
+            "style_pack" -> {
+                switchStylePackFromOverlay()
+                if (recording) stopRecordingFromOverlay()
+            }
+            "qa" -> finalizeQaFromOverlay()
+            "cancel" -> cancelRecordingFromOverlay(direction)
+            else -> Unit
         }
     }
 
     private fun cancelRecordingFromOverlay(direction: SwipeDirection) {
-        if (!recording || !matchesConfiguredCancelSwipe(direction)) {
+        if (!recording || gestureAction(direction) != "cancel") {
             return
         }
         try {
@@ -618,18 +663,6 @@ class OpenLessOverlayService : Service(), OpenLessOverlayBridge.OverlayStateList
         }
     }
 
-    private fun handleLeftSwipe() {
-        when (OpenLessAndroidPreferences.overlayLeftSwipeAction(this)) {
-            "style_pack" -> {
-                switchStylePackFromOverlay()
-                if (recording) {
-                    stopRecordingFromOverlay()
-                }
-            }
-            else -> stopRecordingFromOverlay(translation = true)
-        }
-    }
-
     private fun switchStylePackFromOverlay() {
         try {
             OpenLessNative.nativeSwitchStylePack()
@@ -638,18 +671,6 @@ class OpenLessOverlayService : Service(), OpenLessOverlayBridge.OverlayStateList
             Log.w(TAG, "switch style pack bridge unavailable", error)
             applyVisualState(OverlayVisualState.Error)
             showToast("语音服务未就绪，请打开 OpenLess 后重试")
-        }
-    }
-
-    private fun openQaFromOverlay() {
-        try {
-            Log.i(TAG, "open QA from overlay")
-            OpenLessNative.nativeOpenQaFromOverlay()
-            setArmed(false)
-        } catch (error: Throwable) {
-            Log.w(TAG, "open QA bridge unavailable", error)
-            applyVisualState(OverlayVisualState.Error)
-            showToast("问答服务未就绪，请打开 OpenLess 后重试")
         }
     }
 
@@ -693,6 +714,13 @@ class OpenLessOverlayService : Service(), OpenLessOverlayBridge.OverlayStateList
             applyVisualState(OverlayVisualState.Recording)
         } catch (error: Throwable) {
             Log.w(TAG, "start dictation bridge unavailable", error)
+            // recording was never set true on this path (the native start
+            // call itself threw), so the `recording` setter's own
+            // true->false demote never fires — but tryPromoteRecordingForeground()
+            // already posted the notification before this function was even
+            // called, so it needs tearing down here explicitly or it's
+            // orphaned with nothing left to ever clear it.
+            demoteFromRecordingForeground()
             recording = false
             processing = false
             applyVisualState(OverlayVisualState.Error)
@@ -721,6 +749,30 @@ class OpenLessOverlayService : Service(), OpenLessOverlayBridge.OverlayStateList
             }
         } catch (error: Throwable) {
             Log.w(TAG, "stop dictation bridge unavailable", error)
+            recording = false
+            processing = false
+            applyVisualState(OverlayVisualState.Error)
+            showToast("语音服务未就绪，请打开 OpenLess 后重试")
+        }
+    }
+
+    /** Tears down the mic foreground-service notification — see `recording`'s own setter for why every recording-ends path routes through this one place. Safe to call even when not currently foreground-promoted (stopForeground() no-ops then). */
+    private fun demoteFromRecordingForeground() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION") stopForeground(true)
+        }
+    }
+
+    private fun stopQuickNoteFromOverlay() {
+        try {
+            recording = false
+            processing = true
+            applyVisualState(OverlayVisualState.Processing)
+            OpenLessNative.nativeStopDictationAsQuickNote()
+        } catch (error: Throwable) {
+            Log.w(TAG, "stop quick note bridge unavailable", error)
             recording = false
             processing = false
             applyVisualState(OverlayVisualState.Error)

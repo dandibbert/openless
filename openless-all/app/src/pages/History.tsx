@@ -1,14 +1,17 @@
-// History.tsx — 接 Tauri 后端 list_history / delete_history_entry / clear_history。
-// 真实数据来自 ~/Library/Application Support/OpenLess/history.json。
+// History.tsx — backed by the Tauri commands list_history / delete_history_entry / clear_history.
+// Real data lives in ~/Library/Application Support/OpenLess/history.json.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Icon } from '../components/Icon';
+import { LearnVocabulary } from '../components/LearnVocabulary';
 import { Tooltip } from '../components/Tooltip';
+import { AssistantMarkdown } from '../components/chat/markdown';
 import { detectOS } from '../components/WindowChrome';
 import { formatComboLabel } from '../lib/hotkey';
 import {
   clearHistory,
+  applyQuickNoteRepolish,
   deleteHistoryEntry,
   listHistory,
   listStylePacks,
@@ -25,11 +28,11 @@ import {
 import { canRetranscribeHistoryEntry } from '../lib/history-retranscribe';
 import { useMobileLayout } from '../lib/useMobileLayout';
 import type { DictationSession, PolishMode, StylePack } from '../lib/types';
-import { countCodePoints } from '../lib/unicode';
 import { formatHistoryTime, formatLocaleDecimal, formatLocaleNumber } from '../lib/localeFormat';
 import { useHotkeySettings } from '../state/HotkeySettingsContext';
 import { Btn, Card, PageHeader, Pill } from './_atoms';
 import { SelectLite } from '../components/ui/SelectLite';
+import { isImeCompositionEvent } from '../lib/imeKeyboard';
 
 function useModeLabel(): Record<PolishMode, string> {
   const { t } = useTranslation();
@@ -41,8 +44,9 @@ function useModeLabel(): Record<PolishMode, string> {
   };
 }
 
-// Pill 默认 nowrap + flexShrink: 0，遇上长包名会把同一排的按钮挤变形（「复制」文字竖排）。
-// 显示包名的地方一律改成可收缩 + 省略号，全名挂在外层容器的 title 上悬停查看。
+// Pill defaults to nowrap + flexShrink: 0; a long pack name would squeeze the buttons on the same
+// row out of shape (the "Copy" text wrapping vertically). Anywhere a pack name is shown, use a
+// shrinkable + ellipsis style, with the full name in the outer container's title for hover.
 const TRUNCATED_PILL_STYLE = {
   minWidth: 0,
   maxWidth: '100%',
@@ -52,11 +56,12 @@ const TRUNCATED_PILL_STYLE = {
   flexShrink: 1,
 } as const;
 
-// 历史条目上显示「哪个风格包产出的这段文本」。session.mode 只是风格包的 baseMode
-// （四个内置分类之一），自建包全都会落进这四个桶，光看 mode 分不出是哪个包——
-// 所以优先用 stylePackId 查真实包名，跟本页「重新润色」面板里的风格命名对齐。
-// 内置包例外与命名规则统一走 packDisplayName；旧历史没有 stylePackId、或包已被删除
-// 时同样回落到 mode 名。
+// Which style pack produced this text, shown on the history entry. session.mode is only the pack's
+// baseMode (one of four built-in categories) — all custom packs fall into those buckets, so mode
+// alone cannot identify the pack. Prefer resolving the real pack name via stylePackId, matching
+// the style naming in this page's repolish panel. Built-in pack exceptions and naming go through
+// packDisplayName; old history without stylePackId, or a deleted pack, falls back to the mode
+// name too.
 function styleLabelFor(
   session: DictationSession,
   allPacks: StylePack[] | null,
@@ -68,7 +73,7 @@ function styleLabelFor(
   return pack ? packDisplayName(pack, modeLabel) : modeLabel[session.mode];
 }
 
-export function History() {
+export function History({ quickNotesOnly = false }: { quickNotesOnly?: boolean } = {}) {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage || i18n.language;
   const os = detectOS();
@@ -82,17 +87,22 @@ export function History() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [justCopied, setJustCopied] = useState(false);
   const [justCopiedRaw, setJustCopiedRaw] = useState(false);
-  // 「重新转录」进行中：禁用按钮 + 显示「转录中…」，避免重复点击发起多次 ASR。
+  const [showRawTranscript, setShowRawTranscript] = useState(false);
+  const [repolishOpen, setRepolishOpen] = useState(false);
+  // Retranscription in flight: disable the button and show "Transcribing…", preventing repeated
+  // clicks from firing multiple ASR runs.
   const [retranscribing, setRetranscribing] = useState(false);
   const [retranscriptionResult, setRetranscriptionResult] = useState<{
     sessionId: string;
     text: string;
   } | null>(null);
-  // 录音文件 lazily-detected missing 状态：retention / 条数 cap 清理后磁盘上 wav
-  // 可能已被删，但 history 条目 hasAudioRecording 仍写 true。任一组件
-  // （播放 / 导出）首次 IPC 拿到 'recording not found' 时把 id 加进来，
-  // 之后渲染按钮的条件就转 false，避免反复点击得到同样的 error。
-  // 修 pr_agent "Missing file check" 反馈。
+  const [playbackRequest, setPlaybackRequest] = useState(0);
+  const [audioLoading, setAudioLoading] = useState(false);
+  // Lazily-detected missing recording files: after retention / count-cap cleanup the wav may be
+  // gone from disk while the history entry still has hasAudioRecording=true. When any component
+  // (playback / export) first gets 'recording not found' over IPC, add the id here so the
+  // render condition flips to false, avoiding repeated clicks producing the same error.
+  // Fixes the pr_agent "Missing file check" feedback.
   const [audioMissingIds, setAudioMissingIds] = useState<Set<string>>(() => new Set());
   const markAudioMissing = useCallback((id: string) => {
     setAudioMissingIds((prev) => {
@@ -102,7 +112,7 @@ export function History() {
       return next;
     });
   }, []);
-  const { prefs } = useHotkeySettings();
+  const { prefs, updatePrefs } = useHotkeySettings();
   // The list/detail split needs space after the main sidebar and page padding.
   const mobile = useMobileLayout(1000);
   const [mobileDetailOpen, setMobileDetailOpen] = useState(() => !mobile);
@@ -111,10 +121,13 @@ export function History() {
   useEffect(() => {
     if (!mobile) setMobileDetailOpen(true);
   }, [mobile]);
-  // 风格包在本页有两个用途：给历史条目显示包名、给「重新润色」面板选风格。加载提到这里
-  // 一次拿全，两处共用，省掉切换条目时 RepolishPanel 重挂载带来的重复 IPC。
-  // 注意这里存的是**全部**包（含已禁用）：历史条目可能出自后来被禁用的包，显示名字要能查到；
-  // RepolishPanel 自己再 filter(enabled)，禁用的包不该出现在可选风格里。
+
+  // Style packs have two uses on this page: pack names on history entries and style selection in
+  // the repolish panel. Load them once up here so both share the data, avoiding duplicate IPC
+  // from RepolishPanel remounts when switching entries. Note this stores **all** packs
+  // (including disabled): a history entry may come from a pack disabled later, so its name must
+  // stay resolvable; RepolishPanel filters(enabled) itself — disabled packs must not appear among
+  // the selectable styles.
   const [allPacks, setAllPacks] = useState<StylePack[] | null>(null);
   const [packsError, setPacksError] = useState<string | null>(null);
 
@@ -123,10 +136,11 @@ export function History() {
     setLoadError(null);
     try {
       const data = await listHistory();
-      setItems(data);
+      const visible = quickNotesOnly ? data.filter((entry) => entry.source === 'quick_note') : data;
+      setItems(visible);
       setActionError(null);
       setSelectedId((prev) =>
-        prev && data.some((s) => s.id === prev) ? prev : (data[0]?.id ?? null),
+        prev && visible.some((s) => s.id === prev) ? prev : (visible[0]?.id ?? null),
       );
     } catch (error) {
       console.error('[history] failed to load history', error);
@@ -134,7 +148,7 @@ export function History() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [quickNotesOnly]);
 
   useEffect(() => {
     void refresh();
@@ -156,23 +170,25 @@ export function History() {
     };
   }, []);
 
-  // 不缓存：MODE_LABEL 每次渲染都是新对象，用 useCallback 反而会把旧语言的标签闭包
-  // 留在缓存里，切换界面语言后 Pill 不跟着变。只在渲染里调用，重建成本可忽略。
+  // Do not memoize: MODE_LABEL is a fresh object each render, and useCallback would cache the
+  // old-language label closure, leaving Pills untranslated after a UI language switch. Called
+  // only during render; rebuilding is negligible.
   const styleLabel = (session: DictationSession) => styleLabelFor(session, allPacks, MODE_LABEL);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchShortcut = os === 'mac' ? '⌘K' : 'Ctrl+K';
 
-  // 搜索词防抖：随输入实时更新 query，300ms 后落到 debouncedQuery 再过滤，
-  // 避免每个按键都重算整张列表（与 Marketplace 同模式）。
+  // Debounce the search term: update query live on input, then after 300ms commit to
+  // debouncedQuery and filter, avoiding recomputing the whole list on every keystroke (same
+  // pattern as Marketplace).
   useEffect(() => {
     const id = window.setTimeout(() => setDebouncedQuery(query), 300);
     return () => window.clearTimeout(id);
   }, [query]);
 
-  // ⌘K / Ctrl+K 聚焦搜索框（设计稿提示的快捷键）；⌘R / Ctrl+R 刷新历史列表
-  // （与浏览器「重新加载」直觉一致）。preventDefault 拦掉 webview 默认的整页
-  // reload，改为只重拉 listHistory，避免整个前端重挂载。
+  // ⌘K / Ctrl+K focuses the search box (the shortcut from the design); ⌘R / Ctrl+R refreshes the
+  // history list (matching the browser "reload" instinct). preventDefault stops the webview's
+  // default full-page reload; only listHistory is re-fetched, so the frontend does not remount.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
@@ -192,7 +208,8 @@ export function History() {
   const filtered = useMemo(() => {
     const q = debouncedQuery.trim().toLowerCase();
     if (!q) return items;
-    // 按原始转写 + 润色后文本匹配关键词，覆盖用户能想起的两种内容。
+    // Match keywords against both the raw transcript and the polished text, covering both things
+    // the user might remember.
     return items.filter(
       (s) => s.rawTranscript.toLowerCase().includes(q) || s.finalText.toLowerCase().includes(q),
     );
@@ -202,14 +219,28 @@ export function History() {
     [filtered, selectedId],
   );
 
+  useEffect(() => {
+    setShowRawTranscript(false);
+    setRepolishOpen(false);
+  }, [item?.id]);
+  const handleAudioMissing = useCallback(() => {
+    if (item?.id) markAudioMissing(item.id);
+  }, [item?.id, markAudioMissing]);
+
   const onClear = async () => {
-    if (items.length === 0) return;
-    if (!confirm(t('history.confirmClear', { count: items.length }))) return;
+    const clearable = items.filter((entry) => entry.source !== 'quick_note');
+    if (clearable.length === 0) return;
+    if (!confirm(t('history.confirmClear', { count: clearable.length }))) return;
     setActionError(null);
     try {
       await clearHistory();
-      setItems([]);
-      setSelectedId(null);
+      setItems((prev) => prev.filter((entry) => entry.source === 'quick_note'));
+      setSelectedId((current) => {
+        const remaining = items.filter((entry) => entry.source === 'quick_note');
+        return current && remaining.some((entry) => entry.id === current)
+          ? current
+          : (remaining[0]?.id ?? null);
+      });
     } catch (error) {
       console.error('[history] failed to clear history', error);
       setActionError(t('history.clearFailed', { err: errorMessage(error) }));
@@ -236,8 +267,9 @@ export function History() {
       if (!navigator.clipboard?.writeText) {
         throw new Error('clipboard unavailable');
       }
-      // 润色失败/未产出时 finalText 为空，回退到原文，避免「复制」按钮复制空字符串
-      // 导致原文无法从 UI 取回（polish 失败时仍能拿到识别原文）。
+      // When polish failed / produced nothing, finalText is empty; fall back to the raw text so
+      // the Copy button never copies an empty string, leaving the original unreachable from the
+      // UI (the recognized text survives even when polish fails).
       await navigator.clipboard.writeText(
         item.finalText.trim() ? item.finalText : item.rawTranscript,
       );
@@ -250,7 +282,8 @@ export function History() {
     }
   };
 
-  // 原文（识别结果）单独复制：润色失败或用户只想要未润色文本时使用。
+  // Copy the raw (recognized) text separately: for polish failures or when the user wants the
+  // unpolished text.
   const onCopyRaw = async () => {
     if (!item) return;
     try {
@@ -270,7 +303,8 @@ export function History() {
   const onExportAudio = async () => {
     if (!item || !item.hasAudioRecording) return;
     try {
-      // Wry/WebKit 中 data URL 的 <a download> 可能不触发保存对话框，后端直接调系统对话框
+      // In Wry/WebKit an <a download> with a data URL may not open the save dialog; the backend
+      // invokes the system dialog directly.
       if (isTauri) {
         const { invoke } = await import('@tauri-apps/api/core');
         await invoke('export_audio_recording', { sessionId: item.id });
@@ -296,7 +330,8 @@ export function History() {
         setActionError(t('history.exportError'));
         return;
       }
-      // wav 已被 retention / 条数 cap 清理：把按钮隐藏，不显示错误（用户没干错事）。
+      // wav already removed by retention / count-cap cleanup: hide the button and show no error
+      // (the user did nothing wrong).
       if (msg.includes('recording not found') || msg.includes('not found')) {
         markAudioMissing(item.id);
         return;
@@ -305,8 +340,75 @@ export function History() {
     }
   };
 
-  // 失败记录沿用 #613 的原地修复；已经插入过文字的完成 / 润色失败记录只显示临时结果，
-  // 避免把事后重转文本伪装成当时实际插入的历史事实。
+  const onShareAudio = async () => {
+    if (!item?.hasAudioRecording) return;
+    try {
+      const dataUrl = await readAudioRecording(item.id);
+      const comma = dataUrl.indexOf(',');
+      const b64 = comma >= 0 ? dataUrl.slice(comma + 1) : '';
+      if (!b64) throw new Error('empty recording');
+      const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const file = new File([bin], `openless-recording-${item.id}.wav`, {
+        type: 'audio/wav',
+      });
+      if (!navigator.share || (navigator.canShare && !navigator.canShare({ files: [file] }))) {
+        await onExportAudio();
+        return;
+      }
+      await navigator.share({
+        title: historyTitle(item, t),
+        files: [file],
+      });
+    } catch (error) {
+      const msg = errorMessage(error);
+      if (!isUserCancelled(msg)) {
+        setActionError(t('history.exportFailed', { err: msg }));
+      }
+    }
+  };
+
+  const onChooseExportDirectory = async () => {
+    if (!quickNotesOnly || !prefs || os === 'android') return;
+    try {
+      let picked: string | null = null;
+      if (isTauri) {
+        const { open } = await import('@tauri-apps/plugin-dialog');
+        const selection = await open({
+          directory: true,
+          multiple: false,
+          title: t('history.chooseSaveDirectory', '选择转写文件保存位置'),
+        });
+        picked = Array.isArray(selection) ? null : selection;
+      } else {
+        picked = window.prompt(
+          t('history.saveDirectoryPrompt', '输入转写文件保存目录'),
+          prefs.quickNoteExportDirectory,
+        );
+      }
+      const directory = picked?.trim();
+      if (!directory) return;
+      await updatePrefs({ ...prefs, quickNoteExportDirectory: directory });
+      setActionError(null);
+    } catch (error) {
+      console.error('[history] failed to choose export directory', error);
+      setActionError(t('history.saveDirectoryFailed', { err: errorMessage(error) }));
+    }
+  };
+
+  const onResetExportDirectory = async () => {
+    if (!prefs || !prefs.quickNoteExportDirectory) return;
+    try {
+      await updatePrefs({ ...prefs, quickNoteExportDirectory: '' });
+      setActionError(null);
+    } catch (error) {
+      console.error('[history] failed to reset export directory', error);
+      setActionError(t('history.saveDirectoryFailed', { err: errorMessage(error) }));
+    }
+  };
+
+  // Failed entries keep the #613 in-place fix; completed / polish-failed entries that already
+  // inserted text only show a temporary result, avoiding passing off a re-transcribed text as the
+  // historical fact of what was actually inserted.
   const onRetranscribe = async () => {
     if (!item || !canRetranscribeHistoryEntry(item)) return;
     const sessionId = item.id;
@@ -326,7 +428,8 @@ export function History() {
     } catch (error) {
       console.error('[history] retranscribe failed', error);
       const msg = errorMessage(error);
-      // wav 已被 retention / 条数 cap 清理：隐藏入口，不报错（用户没干错事）。
+      // wav already removed by retention / count-cap cleanup: hide the entry point, no error
+      // (the user did nothing wrong).
       if (msg.includes('recording not found') || msg.includes('not found')) {
         markAudioMissing(sessionId);
         return;
@@ -340,17 +443,19 @@ export function History() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <PageHeader
-        kicker={t('history.kicker')}
-        title={t('history.title')}
-        desc={t('history.desc')}
+        kicker={quickNotesOnly ? t('quickNote.kicker', 'Quick notes') : t('history.kicker')}
+        title={quickNotesOnly ? t('quickNote.title', 'Quick notes') : t('history.title')}
+        desc={quickNotesOnly ? t('quickNote.desc', 'Permanent audio notes.') : t('history.desc')}
         right={
           <div style={{ display: 'flex', gap: 8 }}>
             <Btn icon="refresh" variant="ghost" size="sm" onClick={() => void refresh()}>
               {t('common.refresh')}
             </Btn>
-            <Btn icon="trash" variant="ghost" size="sm" onClick={onClear}>
-              {t('common.clear')}
-            </Btn>
+            {!quickNotesOnly && (
+              <Btn icon="trash" variant="ghost" size="sm" onClick={onClear}>
+                {t('common.clear')}
+              </Btn>
+            )}
           </div>
         }
       />
@@ -368,9 +473,9 @@ export function History() {
             padding={0}
             style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
           >
-            {/* 左列整体是一个滚动容器，搜索框吸顶且自带不透明底 ——
-              列表内容直接从搜索框下方滚过去；样式筛选 chips 与「共 N 条」计数行
-              删掉，只保留搜索。 */}
+            {/* The left column is one scroll container; the search box sticks to the top with an
+              opaque background — the list scrolls underneath it. Style filter chips and the
+              "N entries" count row are dropped; only search remains. */}
             <div className="ol-thinscroll" style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
               <div
                 style={{
@@ -459,7 +564,16 @@ export function History() {
                     {debouncedQuery.trim()
                       ? t('history.searchNoMatch', { query: debouncedQuery.trim() })
                       : t('history.empty', {
-                          trigger: prefs ? formatComboLabel(prefs.dictationHotkey) : '',
+                          trigger: prefs
+                            ? formatComboLabel(
+                                (quickNotesOnly
+                                  ? prefs.quickNoteHotkey
+                                  : prefs.dictationHotkey) ?? {
+                                  primary: '',
+                                  modifiers: [],
+                                },
+                              )
+                            : '',
                         })}
                   </div>
                 )}
@@ -469,10 +583,11 @@ export function History() {
                       key={s.id}
                       onClick={() => {
                         setSelectedId(s.id);
+                        setPlaybackRequest(0);
                         if (mobile) setMobileDetailOpen(true);
                       }}
-                      // 选中项不再用蓝色左条 + 淡蓝底 —— 与渠道行同一套
-                      // 中性语言：圆角 + 灰底 + 细描边。
+                      // Selected items no longer use a blue left bar + pale blue fill — same
+                      // neutral language as channel rows: rounded + gray fill + thin outline.
                       style={{
                         width: '100%',
                         padding: '10px 12px',
@@ -489,7 +604,8 @@ export function History() {
                         marginBottom: 4,
                         transition:
                           'background 0.16s var(--ol-motion-quick), border-color 0.16s var(--ol-motion-quick)',
-                        // 搜索过滤/新记录插入时，进入结果的行淡入轻降。
+                        // Rows fade in and drop slightly when search filters or new records
+                        // insert.
                         animation: 'ol-item-in 0.22s var(--ol-motion-spring) both',
                       }}
                     >
@@ -531,9 +647,10 @@ export function History() {
                           overflow: 'hidden',
                         }}
                       >
-                        {s.finalText.split('\n')[0]}
+                        {historyTitle(s, t)}
                       </div>
-                      {/* tone 仍按 baseMode 走：颜色保留原来的粗分类信息，文字换成实际风格包名。 */}
+                      {/* tone still follows baseMode: the color keeps the original coarse
+                        category info, the text becomes the actual style pack name. */}
                       <div style={{ display: 'flex', minWidth: 0 }} title={styleLabel(s)}>
                         <Pill
                           size="sm"
@@ -597,49 +714,49 @@ export function History() {
                         {t('history.multimodalPipeline')}
                       </Pill>
                     )}
-                    {/* 「录音」前缀：与下方识别/润色耗时区分——录音时长发生在松键前，
-                      不该与流水线各步耗时加总（用户反馈"时间对不上"）。 */}
+                    {/* "Recorded" prefix: distinct from the recognize/polish timings below —
+                      recording time happens before the key release and must not be summed with
+                      the pipeline steps (user feedback: "times don't add up"). */}
                     <span style={{ fontSize: 11, color: 'var(--ol-ink-4)' }}>
                       {t('history.recorded', {
                         duration: formatDuration(item.durationMs, t, locale),
                       })}
                     </span>
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    {item.hasAudioRecording && !audioMissingIds.has(item.id) && (
-                      <Btn
-                        icon="download"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => void onExportAudio()}
-                      >
-                        {t('history.exportRecording')}
-                      </Btn>
-                    )}
-                    {canRetranscribeHistoryEntry(item) && !audioMissingIds.has(item.id) && (
-                      <Btn
-                        icon="refresh"
-                        variant="ghost"
-                        size="sm"
-                        disabled={retranscribing}
-                        onClick={() => void onRetranscribe()}
-                      >
-                        {retranscribing ? t('history.retranscribing') : t('history.retranscribe')}
-                      </Btn>
-                    )}
-                    <Btn icon="trash" variant="ghost" size="sm" onClick={onDelete}>
-                      {t('common.delete')}
-                    </Btn>
-                  </div>
+                  <HistoryActionMenu
+                    hasAudioRecording={
+                      item.hasAudioRecording === true && !audioMissingIds.has(item.id)
+                    }
+                    audioLoading={audioLoading}
+                    showShare={os === 'android'}
+                    canRetranscribe={
+                      canRetranscribeHistoryEntry(item) && !audioMissingIds.has(item.id)
+                    }
+                    retranscribing={retranscribing}
+                    canRepolish={Boolean(item.rawTranscript.trim() || quickNotesOnly)}
+                    showSaveDirectory={quickNotesOnly && os !== 'android'}
+                    exportDirectory={prefs?.quickNoteExportDirectory ?? ''}
+                    onPlay={() => setPlaybackRequest((request) => request + 1)}
+                    onExport={() => void onExportAudio()}
+                    onShare={() => void onShareAudio()}
+                    onRetranscribe={() => void onRetranscribe()}
+                    onDelete={onDelete}
+                    onRepolish={() => setRepolishOpen(true)}
+                    onChooseSaveDirectory={() => void onChooseExportDirectory()}
+                    onResetSaveDirectory={() => void onResetExportDirectory()}
+                  />
                 </div>
-                {/* key 必须带组件前缀：下面的 RepolishPanel 是同一层的兄弟节点，两个都写
-                  裸 `item.id` 会让同层出现重复 key，React 只警告不报错，但 reconcile 匹配
-                  不上旧 fiber —— 每切换一次历史条目就在 DOM 里残留一个「播放录音」按钮，
-                  开着不关的窗口能叠出一整列。 */}
+                {/* The key must carry a component prefix: RepolishPanel below is a sibling at the
+                  same level; if both used bare `item.id` the level would have duplicate keys.
+                  React only warns (no error), but reconcile fails to match the old fiber — every
+                  entry switch leaves a stale playback control in the DOM, and a long-open window
+                  can stack up a whole column of them. */}
                 {item.hasAudioRecording && !audioMissingIds.has(item.id) && (
                   <AudioRecordingPlayer
                     sessionId={item.id}
-                    onMissing={() => markAudioMissing(item.id)}
+                    onMissing={handleAudioMissing}
+                    playRequest={playbackRequest}
+                    onLoadingChange={setAudioLoading}
                     key={`audio-${item.id}`}
                   />
                 )}
@@ -651,9 +768,10 @@ export function History() {
                     />
                   </div>
                 )}
-                {/* 流水线明细：识别 / 润色 / 插入 三步各占一行 —— 左列步骤名、中列
-                  provider·model（或插入目标），右列该步耗时/状态。旧历史没有模型与
-                  耗时字段时对应行自动隐藏，只剩插入行 = 改版前的信息量。 */}
+                {/* Pipeline detail keeps only the recognize / polish steps — left column: step
+                  name, middle column: provider·model, right column: step duration/status.
+                  Insertion is a foreground-delivery detail and is not shown in the note content
+                  area. */}
                 <div
                   style={{
                     marginBottom: 16,
@@ -732,45 +850,12 @@ export function History() {
                       </span>
                     </>
                   )}
-                  <span>{t('history.stepInsert')}</span>
-                  <span style={{ color: 'var(--ol-ink-2)' }}>
-                    {item.appName && (
-                      <>
-                        <b>{item.appName}</b>
-                        {' · '}
-                      </>
-                    )}
-                    {/* 按 Unicode 码点计（emoji / CJK 扩展 B 等增补平面字符不按 UTF-16 码元双算），
-                      与后端 `polished.chars().count()` 及概览页「字数」口径一致。 */}
-                    {t('history.chars', { count: countCodePoints(item.finalText) })}
-                    {item.dictionaryEntryCount != null && item.dictionaryEntryCount > 0 && (
-                      <>
-                        {' · '}
-                        {t('history.vocabHits', { count: item.dictionaryEntryCount })}
-                      </>
-                    )}
-                  </span>
-                  <span style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                    {item.insertStatus === 'inserted'
-                      ? t('history.inserted')
-                      : item.insertStatus === 'pasteSent'
-                        ? t('history.pasteSent')
-                        : item.insertStatus === 'copiedFallback'
-                          ? t('history.copiedFallback', {
-                              shortcut: os === 'mac' ? '⌘V' : 'Ctrl+V',
-                            })
-                          : t('history.insertFailed')}
-                  </span>
                 </div>
-                {/* minWidth: 0 —— grid 子项默认 min-width: auto，任何不换行的内容（这里是风格包名
-                  Pill）都会把整列撑出卡片、逼出横向滚动条。两栏都要加，否则一栏撑宽另一栏跟着宽。 */}
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: mobile ? '1fr' : '1fr 1fr',
-                    gap: 12,
-                  }}
-                >
+                {/* Default to showing only the polished result; the raw text can still be
+                  expanded on demand, sparing users two duplicate columns every time. */}
+                <div style={{ display: 'grid', gap: 12 }}>
+                  {/* The polish result box is de-blued too: neutral surface-2 fill + thin
+                    outline. */}
                   <div
                     style={{
                       minWidth: 0,
@@ -786,61 +871,27 @@ export function History() {
                         alignItems: 'center',
                         justifyContent: 'space-between',
                         gap: 8,
-                        marginBottom: 10,
-                      }}
-                    >
-                      <Pill size="sm" tone="outline">
-                        {t('history.rawLabel')}
-                      </Pill>
-                      {item.rawTranscript && (
-                        <Btn
-                          icon={justCopiedRaw ? 'check' : 'copy'}
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => void onCopyRaw()}
-                        >
-                          {justCopiedRaw ? t('common.copied') : t('common.copy')}
-                        </Btn>
-                      )}
-                    </div>
-                    <p
-                      style={{
-                        margin: 0,
-                        fontSize: 13,
-                        lineHeight: 1.7,
-                        color: 'var(--ol-ink-2)',
-                        whiteSpace: 'pre-wrap',
-                      }}
-                    >
-                      {item.rawTranscript || t('history.rawEmpty')}
-                    </p>
-                  </div>
-                  {/* 润色结果框同样去蓝：中性 surface-2 底 + 细线描边。 */}
-                  <div
-                    style={{
-                      minWidth: 0,
-                      padding: 14,
-                      border: '0.5px solid var(--ol-line)',
-                      borderRadius: 10,
-                      background: 'var(--ol-surface-2)',
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 8,
+                        flexWrap: 'wrap',
                         marginBottom: 10,
                       }}
                     >
                       <span style={{ display: 'flex', minWidth: 0 }} title={styleLabel(item)}>
                         <Pill size="sm" tone="blue" style={TRUNCATED_PILL_STYLE}>
-                          {styleLabel(item)}
+                          {t('history.stepPolish')} · {styleLabel(item)}
                         </Pill>
                       </span>
-                      {/* 「复制」不能被长包名压缩：压窄后按钮文字会竖排。 */}
-                      <span style={{ flexShrink: 0 }}>
+                      <span style={{ display: 'inline-flex', gap: 6, flexShrink: 0 }}>
+                        {item.rawTranscript && (
+                          <Btn
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setShowRawTranscript((visible) => !visible)}
+                          >
+                            {showRawTranscript
+                              ? t('history.hideRaw', '隐藏原文')
+                              : t('history.showRaw', '查看原文')}
+                          </Btn>
+                        )}
                         <Btn
                           icon={justCopied ? 'check' : 'copy'}
                           variant="ghost"
@@ -851,32 +902,89 @@ export function History() {
                         </Btn>
                       </span>
                     </div>
-                    <p
+                    <div style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--ol-ink)' }}>
+                      <AssistantMarkdown
+                        markdown={
+                          item.finalText ||
+                          item.rawTranscript ||
+                          t('quickNote.noTranscript', 'No transcript yet.')
+                        }
+                      />
+                      <LearnVocabulary key={item.id} />
+                    </div>
+                  </div>
+                  {showRawTranscript && (
+                    <div
                       style={{
-                        margin: 0,
-                        fontSize: 13,
-                        lineHeight: 1.7,
-                        color: 'var(--ol-ink)',
-                        whiteSpace: 'pre-line',
+                        minWidth: 0,
+                        padding: 14,
+                        border: '0.5px solid var(--ol-line)',
+                        borderRadius: 10,
+                        background: 'var(--ol-surface-2)',
                       }}
                     >
-                      {item.finalText}
-                    </p>
-                  </div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                          marginBottom: 10,
+                        }}
+                      >
+                        <Pill size="sm" tone="outline">
+                          {t('history.stepAsr')}
+                        </Pill>
+                        {item.rawTranscript && (
+                          <Btn
+                            icon={justCopiedRaw ? 'check' : 'copy'}
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => void onCopyRaw()}
+                          >
+                            {justCopiedRaw ? t('common.copied') : t('common.copy')}
+                          </Btn>
+                        )}
+                      </div>
+                      <p
+                        style={{
+                          margin: 0,
+                          fontSize: 13,
+                          lineHeight: 1.7,
+                          color: 'var(--ol-ink-2)',
+                          whiteSpace: 'pre-wrap',
+                        }}
+                      >
+                        {item.rawTranscript || t('history.rawEmpty')}
+                      </p>
+                    </div>
+                  )}
                 </div>
-                {/* 重新润色：拿这条的原文再跑一次 LLM。没有原文就没得润色（转录失败条目），
-                  此时整块不渲染；QA 记录的原文是问题而不是待润色文本，同样不渲染。
-                  key 让切换记录时结果与状态一起重置，避免把上一条的结果留在新条目下面；
-                  前缀是为了跟上面播放器的 key 区分开（同层重复 key 会残留旧节点）。 */}
-                {item.rawTranscript.trim() && item.errorCode !== 'qaSession' && (
-                  <RepolishPanel
-                    session={item}
-                    mobile={mobile}
-                    allPacks={allPacks}
-                    packsError={packsError}
-                    key={`repolish-${item.id}`}
-                  />
-                )}
+                {/* Repolish: run the LLM again on this entry's raw text. No raw text means
+                  nothing to repolish (failed transcription entries) — the whole block is not
+                  rendered; QA entries' raw text is the question, not text to polish, so they are
+                  not rendered either. The key resets result and state when switching entries, so
+                  the previous entry's result does not linger under the new one; the prefix
+                  distinguishes it from the player's key above (duplicate same-level keys would
+                  leave stale nodes). */}
+                {repolishOpen &&
+                  (item.rawTranscript.trim() || quickNotesOnly) &&
+                  item.errorCode !== 'qaSession' && (
+                    <RepolishPanel
+                      session={item}
+                      mobile={mobile}
+                      allPacks={allPacks}
+                      packsError={packsError}
+                      onClose={() => setRepolishOpen(false)}
+                      persistOnApply={quickNotesOnly}
+                      onApplied={(updated) =>
+                        setItems((prev) =>
+                          prev.map((entry) => (entry.id === updated.id ? updated : entry)),
+                        )
+                      }
+                      key={`repolish-${item.id}`}
+                    />
+                  )}
               </>
             ) : (
               <div
@@ -896,8 +1004,249 @@ export function History() {
   );
 }
 
-/** 后端超时错误在 IPC 边界退化成裸字符串（LLMError::Timeout → "timeout"）。
- *  只匹配整串的常见超时形态，避免其它含 "timeout" 字样的错误被误判成超时。 */
+interface HistoryActionMenuProps {
+  hasAudioRecording: boolean;
+  audioLoading: boolean;
+  showShare: boolean;
+  canRetranscribe: boolean;
+  retranscribing: boolean;
+  canRepolish: boolean;
+  showSaveDirectory: boolean;
+  exportDirectory: string;
+  onPlay: () => void;
+  onExport: () => void;
+  onShare: () => void;
+  onRetranscribe: () => void;
+  onDelete: () => void | Promise<void>;
+  onRepolish: () => void;
+  onChooseSaveDirectory: () => void;
+  onResetSaveDirectory: () => void;
+}
+
+function HistoryActionMenu({
+  hasAudioRecording,
+  audioLoading,
+  showShare,
+  canRetranscribe,
+  retranscribing,
+  canRepolish,
+  showSaveDirectory,
+  exportDirectory,
+  onPlay,
+  onExport,
+  onShare,
+  onRetranscribe,
+  onDelete,
+  onRepolish,
+  onChooseSaveDirectory,
+  onResetSaveDirectory,
+}: HistoryActionMenuProps) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isImeCompositionEvent(event)) return;
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  const run = (action: () => void | Promise<void>) => {
+    setOpen(false);
+    void action();
+  };
+
+  return (
+    <div ref={rootRef} style={{ position: 'relative', flexShrink: 0 }}>
+      <Btn
+        icon="more"
+        variant="ghost"
+        size="sm"
+        ariaLabel={t('history.actionMenu', '录音操作')}
+        title={t('history.actionMenu', '录音操作')}
+        ariaExpanded={open}
+        onClick={() => setOpen((visible) => !visible)}
+        style={{ width: 36, justifyContent: 'center', padding: '7px 8px' }}
+      />
+      {open && (
+        <div
+          role="menu"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            right: 0,
+            zIndex: 30,
+            width: 'min(260px, calc(100vw - 40px))',
+            maxHeight: 'min(70vh, 420px)',
+            overflowY: 'auto',
+            padding: 6,
+            border: '0.5px solid var(--ol-line-strong)',
+            borderRadius: 10,
+            background: 'var(--ol-surface)',
+            boxShadow: 'var(--ol-shadow-md, 0 12px 30px rgba(0,0,0,.18))',
+          }}
+        >
+          {hasAudioRecording && (
+            <>
+              <HistoryActionMenuItem
+                icon="play"
+                label={audioLoading ? t('history.audioLoading') : t('history.playRecording')}
+                disabled={audioLoading}
+                onClick={() => run(onPlay)}
+              />
+              <HistoryActionMenuItem
+                icon="download"
+                label={t('history.exportRecording')}
+                onClick={() => run(onExport)}
+              />
+              {showShare && (
+                <HistoryActionMenuItem
+                  icon="upload"
+                  label={t('quickNote.shareRecording', '分享录音')}
+                  onClick={() => run(onShare)}
+                />
+              )}
+              <div style={{ height: 1, margin: '6px 4px', background: 'var(--ol-line-soft)' }} />
+            </>
+          )}
+          {canRetranscribe && (
+            <HistoryActionMenuItem
+              icon="refresh"
+              label={retranscribing ? t('history.retranscribing') : t('history.retranscribe')}
+              disabled={retranscribing}
+              onClick={() => run(onRetranscribe)}
+            />
+          )}
+          <HistoryActionMenuItem
+            icon="sparkle"
+            label={t('history.repolish.title')}
+            disabled={!canRepolish}
+            onClick={() => run(onRepolish)}
+          />
+          <HistoryActionMenuItem
+            icon="trash"
+            label={t('common.delete')}
+            danger
+            onClick={() => run(onDelete)}
+          />
+          {showSaveDirectory && (
+            <>
+              <div style={{ height: 1, margin: '6px 4px', background: 'var(--ol-line-soft)' }} />
+              <HistoryActionMenuItem
+                icon="archive"
+                label={
+                  exportDirectory
+                    ? t('history.changeSaveDirectory', '更改转写文件保存位置')
+                    : t('history.saveDirectory', '设置转写文件保存位置')
+                }
+                detail={exportDirectory || t('history.defaultSaveDirectory', '每次导出时选择')}
+                onClick={() => run(onChooseSaveDirectory)}
+              />
+              {exportDirectory && (
+                <HistoryActionMenuItem
+                  icon="x"
+                  label={t('history.resetSaveDirectory', '恢复默认保存位置')}
+                  onClick={() => run(onResetSaveDirectory)}
+                />
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HistoryActionMenuItem({
+  icon,
+  label,
+  detail,
+  disabled = false,
+  danger = false,
+  onClick,
+}: {
+  icon: string;
+  label: string;
+  detail?: string;
+  disabled?: boolean;
+  danger?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        width: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 9,
+        padding: '8px 9px',
+        border: 0,
+        borderRadius: 7,
+        background: 'transparent',
+        color: danger ? 'var(--ol-red, #ef4444)' : 'var(--ol-ink-2)',
+        fontFamily: 'inherit',
+        fontSize: 12.5,
+        textAlign: 'left',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
+      }}
+    >
+      <Icon name={icon} size={14} />
+      <span style={{ minWidth: 0, flex: 1 }}>
+        <span style={{ display: 'block' }}>{label}</span>
+        {detail && (
+          <span
+            title={detail}
+            style={{
+              display: 'block',
+              marginTop: 2,
+              overflow: 'hidden',
+              color: 'var(--ol-ink-4)',
+              fontSize: 10.5,
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {detail}
+          </span>
+        )}
+      </span>
+    </button>
+  );
+}
+
+function historyTitle(
+  session: DictationSession,
+  t: ReturnType<typeof useTranslation>['t'],
+): string {
+  const text = (session.finalText || session.rawTranscript).trim();
+  if (text) return text.split(/\r?\n/, 1)[0];
+  if (session.errorCode === 'recording') return t('quickNote.recording', 'Recording…');
+  if (session.errorCode === 'cancelled') {
+    return t('quickNote.cancelledTitle', 'Recording cancelled');
+  }
+  if (session.errorCode) return t('quickNote.failedTitle', 'Recording needs attention');
+  return t('quickNote.emptyTitle', 'Untitled recording');
+}
+
+/** Backend timeout errors degrade to bare strings at the IPC boundary (LLMError::Timeout →
+ *  "timeout"). Only match whole-string common timeout shapes so other errors containing
+ *  "timeout" are not misjudged as timeouts. */
 function isTimeout(message: string): boolean {
   const trimmed = message.trim();
   return /^(timeout|timed out|request timed out)$/i.test(trimmed) || trimmed.includes('超时');
@@ -910,48 +1259,61 @@ function errorMessage(error: unknown): string {
 }
 
 interface RepolishResult {
-  /** 结果卡片的 key。同一个风格重复应用会覆盖上一次，不无限堆卡片。 */
+  /** Key of the result card. Repeated applies of the same style overwrite the previous one
+   *  instead of stacking cards forever. */
   key: string;
   title: string;
   text: string;
 }
 
 /**
- * 「重新润色」面板：拿这条历史的**原文**再跑一次 LLM。
+ * Repolish panel: run the LLM again on this history entry's **raw text**.
  *
- * 两个入口共用一条后端通道（`repolish`，stylePackId 可选）：
- * - 「用原风格重试」→ 优先传产生这条记录的风格包 id（包已删除/旧历史/未加载时回落当前
- *   激活风格）。用同一套风格再跑一遍，才能判断上次的结果是模型抖动还是稳定行为 ——
- *   这是用户说「AI 识别得不对」时真正想做的对照实验。
- * - 「应用」→ 传选中的 pack id，看同一段话换个风格是什么样。
+ * Both entries share one backend channel (`repolish`, stylePackId optional):
+ * - "Retry with original style" → prefer the id of the pack that produced this entry (falling
+ *   back to the currently active style when the pack is deleted / old history / not loaded).
+ *   Rerunning with the same style is the control experiment that tells whether the previous
+ *   result was model jitter or stable behavior — what the user really wants when they say
+ *   "the AI recognized it wrong".
+ * - "Apply" → pass the selected pack id, to see the same text in a different style.
  *
- * 结果只在本次查看时显示，不写回历史条目：历史的 finalText 是「当时真的插进去的那段
- * 文字」，是一条事实记录，不该被事后试算覆盖。面板顶部的说明也把这点直说了。
+ * Results are shown only for this viewing session and are not written back to the history entry:
+ * the entry's finalText is "what was actually inserted at the time", a factual record that a
+ * later trial must not overwrite. The hint at the top of the panel says so directly.
  *
- * 注意这里只重跑润色，不重跑识别 —— 没有归档录音的历史只能使用原文。
- * 「重新转录」入口对所有仍留有录音的传统 ASR 条目开放。
+ * Note this reruns polish only, not recognition — history without an archived recording can only
+ * use the raw text. The "retranscribe" entry point is open to all legacy ASR entries that still
+ * have a recording.
  */
 function RepolishPanel({
   session,
   mobile,
   allPacks,
   packsError,
+  onClose,
+  persistOnApply,
+  onApplied,
 }: {
   session: DictationSession;
   mobile: boolean;
-  /** History 顶层加载的**全部**风格包（含已禁用）；null 表示还在加载。 */
+  /** **All** style packs loaded at the History top level (including disabled); null = loading. */
   allPacks: StylePack[] | null;
   packsError: string | null;
+  onClose: () => void;
+  persistOnApply: boolean;
+  onApplied: (updated: DictationSession) => void;
 }) {
   const { t } = useTranslation();
   const MODE_LABEL = useModeLabel();
   const [selectedPackId, setSelectedPackId] = useState<string>('');
   const [running, setRunning] = useState<'retry' | 'apply' | null>(null);
+  const [applyingKey, setApplyingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<RepolishResult[]>([]);
+  const canRun = session.rawTranscript.trim().length > 0;
 
-  // 只列启用的包：禁用的包在别处也不参与润色，这里列出来会让「应用」得到
-  // 一个用户以为已经关掉的风格。
+  // List enabled packs only: disabled packs do not participate in polish elsewhere either;
+  // listing them here would let "Apply" use a style the user believes is turned off.
   const packs = useMemo(() => (allPacks ? allPacks.filter((p) => p.enabled) : null), [allPacks]);
 
   useEffect(() => {
@@ -960,18 +1322,21 @@ function RepolishPanel({
   }, [packs]);
 
   const run = async (kind: 'retry' | 'apply') => {
-    // 重试优先用产生这条记录的原包；原包已删除/旧历史/未加载时显式落到当前激活包
-    // （其次第一个可用包）——前端标注与实际执行一致，而不是让后端走 None 兜底链。
+    // Retry prefers the original pack that produced this entry; if deleted / old history / not
+    // loaded, fall back explicitly to the active pack (then the first available one) — keeping
+    // the frontend label consistent with actual execution instead of letting the backend walk
+    // its None fallback chain.
     const packId =
       kind === 'apply'
         ? selectedPackId
         : resolveRepolishRetryPackIdWithFallback(session, allPacks, packs ?? []);
-    if (kind === 'apply' && !packId) return;
+    if (!canRun || (kind === 'apply' && !packId)) return;
     setRunning(kind);
     setError(null);
     try {
       const text = await repolish(session.rawTranscript, session.mode, packId);
-      // 用 allPacks 而非 packs 找包名：按已禁用原包重试时标题仍显示真实包名。
+      // Use allPacks rather than packs to look up the name: retrying with a disabled original
+      // pack still shows its real name in the title.
       const pack = packId ? allPacks?.find((p) => p.id === packId) : undefined;
       const result: RepolishResult = {
         key: packId ?? '__retry__',
@@ -980,19 +1345,39 @@ function RepolishPanel({
           : t('history.repolish.retryResultTitle'),
         text,
       };
-      // 同一个 key 覆盖旧结果，新 key 追加到最前面 —— 最新的试算结果离操作区最近。
+      // The same key overwrites the old result; a new key is prepended — the latest trial stays
+      // closest to the action area.
       setResults((prev) => [result, ...prev.filter((r) => r.key !== result.key)]);
     } catch (err) {
       console.error('[history] repolish failed', err);
       const msg = errorMessage(err);
-      // 后端把 LLMError::Timeout 原样透成字符串 "timeout"，直接显示等于没说 ——
-      // 用户看到「重新润色失败：timeout」只会以为是这个功能坏了，而实际是当前 LLM
-      // provider 没在 30 秒内回包（免费模型池尤其常见）。换一句能照着做的提示。
+      // The backend passes LLMError::Timeout through as the bare string "timeout"; showing it
+      // directly tells the user nothing — "Repolish failed: timeout" reads like the feature is
+      // broken when the actual cause is the current LLM provider not responding within 30s
+      // (especially common in the free model pool). Use a message the user can act on.
       setError(
         isTimeout(msg) ? t('history.repolish.timeout') : t('history.repolish.failed', { err: msg }),
       );
     } finally {
       setRunning(null);
+    }
+  };
+
+  const applyResult = async (result: RepolishResult) => {
+    if (!persistOnApply) return;
+    setApplyingKey(result.key);
+    setError(null);
+    try {
+      const updated = await applyQuickNoteRepolish(
+        session.id,
+        result.text,
+        result.key === '__retry__' ? (session.stylePackId ?? undefined) : result.key,
+      );
+      onApplied(updated);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setApplyingKey(null);
     }
   };
 
@@ -1019,7 +1404,8 @@ function RepolishPanel({
           }}
         >
           {t('history.repolish.title')}
-          {/* 常驻说明文字收进「?」徽章，悬停/聚焦才展开全文（与设置页同款）。 */}
+          {/* Persistent hint text collapsed into a "?" badge, expanded on hover/focus (same
+            pattern as the settings pages). */}
           <Tooltip content={t('history.repolish.hint')} wrap placement="bottom" focusable>
             <span
               style={{
@@ -1038,11 +1424,16 @@ function RepolishPanel({
             </span>
           </Tooltip>
         </span>
-        {results.length > 0 && (
-          <Btn size="sm" variant="ghost" onClick={() => setResults([])}>
-            {t('history.repolish.clear')}
+        <span style={{ display: 'inline-flex', gap: 6 }}>
+          {results.length > 0 && (
+            <Btn size="sm" variant="ghost" onClick={() => setResults([])}>
+              {t('history.repolish.clear')}
+            </Btn>
+          )}
+          <Btn size="sm" variant="ghost" onClick={onClose}>
+            {t('common.close')}
           </Btn>
-        )}
+        </span>
       </div>
 
       <div
@@ -1054,11 +1445,16 @@ function RepolishPanel({
           marginBottom: results.length > 0 ? 14 : 0,
         }}
       >
+        {!canRun && (
+          <div style={{ fontSize: 11, color: 'var(--ol-ink-4)', marginBottom: 10 }}>
+            {t('quickNote.repolishNeedsTranscript', 'Re-transcribe the audio before repolishing.')}
+          </div>
+        )}
         <Btn
           icon="refresh"
           variant="ghost"
           size="sm"
-          disabled={running !== null}
+          disabled={running !== null || !canRun}
           onClick={() => void run('retry')}
         >
           {running === 'retry' ? t('history.repolish.retrying') : t('history.repolish.retry')}
@@ -1074,7 +1470,7 @@ function RepolishPanel({
           </span>
         ) : (
           <>
-            {/* 统一用官方 SelectLite，不再混用原生 <select>。 */}
+            {/* Use the official SelectLite consistently; no more mixing in a native <select>. */}
             <SelectLite
               value={selectedPackId}
               onChange={setSelectedPackId}
@@ -1089,7 +1485,7 @@ function RepolishPanel({
             <Btn
               variant="ghost"
               size="sm"
-              disabled={!selectedPackId || running !== null}
+              disabled={!selectedPackId || running !== null || !canRun}
               onClick={() => void run('apply')}
             >
               {running === 'apply' ? t('history.repolish.applying') : t('history.repolish.apply')}
@@ -1117,7 +1513,14 @@ function RepolishPanel({
       {results.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr' : '1fr 1fr', gap: 12 }}>
           {results.map((result) => (
-            <HistoryResultCard key={result.key} title={result.title} text={result.text} />
+            <HistoryResultCard
+              key={result.key}
+              title={result.title}
+              text={result.text}
+              applyLabel={persistOnApply ? t('quickNote.applyResult', 'Apply to note') : undefined}
+              applying={applyingKey === result.key}
+              onApply={persistOnApply ? () => void applyResult(result) : undefined}
+            />
           ))}
         </div>
       )}
@@ -1125,7 +1528,19 @@ function RepolishPanel({
   );
 }
 
-function HistoryResultCard({ title, text }: { title: string; text: string }) {
+function HistoryResultCard({
+  title,
+  text,
+  applyLabel,
+  applying = false,
+  onApply,
+}: {
+  title: string;
+  text: string;
+  applyLabel?: string;
+  applying?: boolean;
+  onApply?: () => void;
+}) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
@@ -1141,8 +1556,9 @@ function HistoryResultCard({ title, text }: { title: string; text: string }) {
   };
 
   return (
-    // minWidth: 0 —— grid 子项默认 min-width: auto，标题 Pill 不换行时会把卡片
-    // 撑出结果网格（与详情页两栏文本卡片同一类问题）。
+    // minWidth: 0 — grid children default to min-width: auto; a non-wrapping title Pill would
+    // push the card outside the result grid (same class of problem as the detail page's two
+    // column text cards).
     <div
       style={{
         minWidth: 0,
@@ -1176,18 +1592,15 @@ function HistoryResultCard({ title, text }: { title: string; text: string }) {
             {copied ? t('common.copied') : t('common.copy')}
           </Btn>
         )}
+        {onApply && text.trim() && (
+          <Btn variant="ghost" size="sm" disabled={applying} onClick={onApply}>
+            {applying ? t('quickNote.applying', 'Applying…') : applyLabel}
+          </Btn>
+        )}
       </div>
-      <p
-        style={{
-          margin: 0,
-          fontSize: 13,
-          lineHeight: 1.7,
-          color: 'var(--ol-ink-2)',
-          whiteSpace: 'pre-wrap',
-        }}
-      >
-        {text.trim() || t('history.repolish.empty')}
-      </p>
+      <div style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--ol-ink-2)' }}>
+        <AssistantMarkdown markdown={text.trim() || t('history.repolish.empty')} />
+      </div>
     </div>
   );
 }
@@ -1202,16 +1615,21 @@ function isUserCancelled(message: string): boolean {
   );
 }
 
-/** 当 session.hasAudioRecording 为 true 时渲染：一个加载按钮 + 拿到字节后切换为
- *  原生 audio controls。Blob URL 在组件 unmount 时 revoke，避免泄漏。
- *  `onMissing` 在后端返回 'recording not found'（wav 已被 prune）时触发，让父组件
- *  把按钮永久隐藏，避免用户继续点击得到同样错误。 */
+/** Rendered when session.hasAudioRecording is true: loading is triggered by the detail action
+ *  menu, and once bytes arrive it switches to native audio controls. The Blob URL is revoked on
+ *  unmount to avoid leaks.
+ *  `onMissing` fires when the backend returns 'recording not found' (wav pruned), letting the
+ *  parent hide the button for good so the user stops hitting the same error. */
 function AudioRecordingPlayer({
   sessionId,
   onMissing,
+  playRequest = 0,
+  onLoadingChange,
 }: {
   sessionId: string;
   onMissing?: () => void;
+  playRequest?: number;
+  onLoadingChange?: (loading: boolean) => void;
 }) {
   const { t } = useTranslation();
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
@@ -1219,18 +1637,20 @@ function AudioRecordingPlayer({
   const [errorText, setErrorText] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const blobUrlRef = useRef<string | null>(null);
+  const initialPlayRequestRef = useRef(playRequest);
 
-  // 组件 unmount 时释放 Blob URL，避免内存泄漏。
+  // Revoke the Blob URL on unmount to avoid a memory leak.
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      onLoadingChange?.(false);
       if (blobUrlRef.current) {
         URL.revokeObjectURL(blobUrlRef.current);
         blobUrlRef.current = null;
       }
     };
-  }, []);
+  }, [onLoadingChange]);
 
   const clearBlobUrl = () => {
     if (blobUrlRef.current) {
@@ -1240,15 +1660,16 @@ function AudioRecordingPlayer({
     setBlobUrl(null);
   };
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setStatus('loading');
     setErrorText(null);
+    onLoadingChange?.(true);
     try {
       const dataUrl = await readAudioRecording(sessionId);
       if (!mountedRef.current) return;
       if (!dataUrl || dataUrl === 'data:audio/wav;base64,') throw new Error('empty recording');
-      // WebKitGTK <audio> 对 data: URL 解码不稳定（时长 0 / 播不动），
-      // 把 base64 解码为二进制再封装成 Blob URL，在 WebKit 里远更可靠。
+      // WebKitGTK <audio> decodes data: URLs unreliably (duration 0 / won't play); decoding the
+      // base64 into binary and wrapping it as a Blob URL is far more reliable under WebKit.
       const comma = dataUrl.indexOf(',');
       const b64 = comma >= 0 ? dataUrl.slice(comma + 1) : '';
       if (!b64) throw new Error('empty recording');
@@ -1273,8 +1694,18 @@ function AudioRecordingPlayer({
       }
       setStatus('error');
       setErrorText(msg);
+    } finally {
+      onLoadingChange?.(false);
     }
-  };
+  }, [onLoadingChange, onMissing, sessionId]);
+
+  useEffect(() => {
+    // A newly mounted player may receive an old global counter while the user
+    // switches history entries. Only a request created after this instance
+    // mounted is allowed to trigger loading/autoplay.
+    if (playRequest <= initialPlayRequestRef.current) return;
+    void load();
+  }, [load, playRequest]);
 
   if (status === 'ready' && blobUrl) {
     return (
@@ -1299,26 +1730,16 @@ function AudioRecordingPlayer({
       </div>
     );
   }
-  return (
-    <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
-      <Btn
-        icon="play"
-        variant="ghost"
-        size="sm"
-        onClick={() => void load()}
-        disabled={status === 'loading'}
-      >
-        {status === 'loading' ? t('history.audioLoading') : t('history.playRecording')}
-      </Btn>
-      {status === 'error' && (
-        <span style={{ fontSize: 11, color: 'var(--ol-err)' }}>{errorText}</span>
-      )}
+  return status === 'loading' || status === 'error' ? (
+    <div style={{ marginBottom: 14, fontSize: 11, color: 'var(--ol-err)' }}>
+      {status === 'loading' ? t('history.audioLoading') : errorText}
     </div>
-  );
+  ) : null;
 }
 
-/** 流水线单步耗时：<1s 显示整数毫秒（流式收尾常在几十 ms，0.1s 精度会把不同结果
- *  拍成同一个值，模型对比就失真了——PR #826 review）；≥1s 沿用 0.1s 精度。 */
+/** Per-step pipeline duration: <1s shows whole milliseconds (streaming tails are often tens of
+ *  ms; 0.1s precision would flatten different results into the same value, distorting model
+ *  comparisons — PR #826 review); >=1s keeps 0.1s precision. */
 function formatStepDuration(
   ms: number,
   t: ReturnType<typeof useTranslation>['t'],

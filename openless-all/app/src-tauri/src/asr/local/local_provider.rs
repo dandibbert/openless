@@ -1,29 +1,31 @@
-//! 本地 Qwen3-ASR 在 dictation 路径上的适配器。
+//! Adapter that plugs the local Qwen3-ASR into the dictation path.
 //!
-//! 与 `WhisperBatchASR` 形状对齐：实现 `AudioConsumer` 缓冲 PCM，stop 时
-//! MLX 后端整段 batch 解码；C 后端保持流式解码，并通过 `local-asr-token`
-//! 向前端发送稳定 token。
+//! Same shape as `WhisperBatchASR`: implements `AudioConsumer` to buffer PCM;
+//! on stop, the MLX backend decodes the whole recording as one batch while the
+//! C backend keeps streaming decode, emitting stable tokens to the frontend
+//! via `local-asr-token`.
 //!
-//! engine 现在由 `LocalAsrCache` 提供——Coordinator 在 build_local_qwen3 里
-//! 取已缓存的引擎再传进来，避免每次会话都重加载 1.2GB+ 模型。
+//! The engine is now provided by `LocalAsrCache` — the Coordinator fetches the
+//! cached engine in build_local_qwen3 and passes it in, avoiding reloading the
+//! 1.2GB+ model on every session.
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 use std::sync::Arc;
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 use super::LocalQwenEngine;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 use crate::asr::RawTranscript;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 use anyhow::{Context, Result};
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 use parking_lot::Mutex;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 use tauri::{AppHandle, Emitter};
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 pub struct LocalQwenAsr {
     engine: Arc<LocalQwenEngine>,
     operation_id: u64,
@@ -32,7 +34,7 @@ pub struct LocalQwenAsr {
     app: AppHandle,
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 impl LocalQwenAsr {
     pub fn new(app: AppHandle, engine: Arc<LocalQwenEngine>) -> Self {
         let operation_id = engine.next_operation_id();
@@ -45,14 +47,16 @@ impl LocalQwenAsr {
         }
     }
 
-    /// 当前缓冲音频时长（毫秒）。Coordinator 在 transcribe() 调用前读取，
-    /// 用来给本地 Qwen ASR 计算动态超时（max(15, ceil(audio_s × 0.6) + 10)）。
-    /// 不消费缓冲。
+    /// Duration (ms) of buffered audio. The coordinator reads it before
+    /// calling transcribe() to compute the dynamic timeout for local Qwen ASR
+    /// (max(15, ceil(audio_s × 0.6) + 10)). Does not consume the buffer.
     pub fn buffer_duration_ms(&self) -> u64 {
         pcm_duration_ms(self.buffer.lock().len())
     }
 
-    /// stop 时调用：MLX 整段 batch；C 保持历史流式 token 与尾部静音收尾行为。
+    /// Called on stop: MLX decodes the whole recording as one batch; the C
+    /// backend keeps its historical streaming tokens and trailing-silence
+    /// finalization behavior.
     pub async fn transcribe(self: Arc<Self>) -> Result<RawTranscript> {
         self.cancelled.store(false, Ordering::Release);
         let pcm_bytes = std::mem::take(&mut *self.buffer.lock());
@@ -98,14 +102,14 @@ impl LocalQwenAsr {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 impl crate::recorder::AudioConsumer for LocalQwenAsr {
     fn consume_pcm_chunk(&self, pcm: &[u8]) {
         self.buffer.lock().extend_from_slice(pcm);
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 fn i16_le_bytes_to_f32(bytes: &[u8]) -> Vec<f32> {
     bytes
         .chunks_exact(2)
@@ -116,17 +120,17 @@ fn i16_le_bytes_to_f32(bytes: &[u8]) -> Vec<f32> {
         .collect()
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 fn pcm_duration_ms(byte_len: usize) -> u64 {
     (byte_len as u64 / 2) * 1000 / 16_000
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 fn token_emission_enabled(cancelled: &AtomicBool) -> bool {
     !cancelled.load(Ordering::Acquire)
 }
 
-#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
 

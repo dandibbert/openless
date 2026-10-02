@@ -342,7 +342,14 @@ fn backend(
 
 #[tokio::test]
 async fn qa_and_selection_voice_never_request_disk_archives() {
-    for entry in ["qa", "qa-omni", "selection", "dictation", "less"] {
+    for entry in [
+        "qa",
+        "qa-omni",
+        "selection",
+        "selection-omni",
+        "dictation",
+        "less",
+    ] {
         let plans = Arc::new(Mutex::new(Vec::new()));
         let recorder = testing::FixtureAudioRecorder::new(vec![vec![0; 320]], Vec::new());
         let (backend, path) = backend(
@@ -357,10 +364,10 @@ async fn qa_and_selection_voice_never_request_disk_archives() {
             Arc::new(QaRuntime::default()),
         );
         // The main-path debug switch must not opt private QA/Selection audio
-        // into disk retention. Traditional and Omni QA share this boundary.
+        // into disk retention. Traditional and Omni QA/Selection share this boundary.
         let mut prefs = backend.get_preferences();
         prefs.record_audio_for_debug = true;
-        if entry == "qa-omni" {
+        if matches!(entry, "qa-omni" | "selection-omni") {
             prefs.multimodal_pipeline_enabled = true;
             prefs.pipeline_mode = shared_types::PipelineMode::Multimodal;
         }
@@ -419,6 +426,29 @@ async fn qa_and_selection_voice_never_request_disk_archives() {
                         .expect("private Selection audio must stay in memory"),
                     "instruction"
                 );
+                backend
+                    .services()
+                    .selection_voice
+                    .cancel(Some(id))
+                    .await
+                    .unwrap();
+            }
+            "selection-omni" => {
+                let id = backend
+                    .services()
+                    .selection_voice
+                    .begin(SelectionCapture {
+                        text: "selection".into(),
+                        source_app: None,
+                    })
+                    .await
+                    .unwrap();
+                let capture = backend
+                    .start_selection_voice_capture(id, Arc::new(Control))
+                    .await
+                    .unwrap();
+                // Finish would call Omni; cancel is enough to prove archive policy.
+                let _ = capture.cancel().await;
                 backend
                     .services()
                     .selection_voice
@@ -732,22 +762,30 @@ async fn cancellation_during_cold_asr_stops_the_already_started_microphone() {
         assert!(starting.await.unwrap().is_err());
         assert_eq!(starts.load(Ordering::SeqCst), 1);
         if less {
-            let phases = std::iter::from_fn(|| events.try_recv().ok())
+            let mut snapshots = std::iter::from_fn(|| events.try_recv().ok())
                 .filter_map(|event| match event.kind {
                     BackendEventKind::LessComputerEvent(LessComputerEvent {
-                        kind: LessComputerEventKind::VoiceState { phase, .. },
+                        kind:
+                            LessComputerEventKind::VoiceState {
+                                phase, transcript, ..
+                            },
                         ..
-                    }) => Some(phase),
+                    }) => Some((phase, transcript)),
                     _ => None,
                 })
                 .collect::<Vec<_>>();
+            let terminal = snapshots.pop().unwrap();
             assert_eq!(
-                phases,
-                [
-                    LessComputerVoicePhase::Starting,
-                    LessComputerVoicePhase::Idle
-                ]
+                terminal,
+                (LessComputerVoicePhase::Idle, String::new()),
+                "a cancelled cold start must not leave live transcript text behind"
             );
+            // The ASR fixture streams a live partial while starting; it is
+            // mirrored into the same Starting phase, never a later phase.
+            assert!(!snapshots.is_empty());
+            assert!(snapshots
+                .iter()
+                .all(|(phase, _)| *phase == LessComputerVoicePhase::Starting));
         }
         std::fs::remove_dir_all(path).unwrap();
     }
@@ -1158,26 +1196,30 @@ async fn less_voice_feedback_preserves_phases_and_rejects_late_levels() {
                         session_id,
                         phase,
                         level,
+                        transcript,
                         ..
                     },
                 ..
             }) = event.kind
             {
                 assert_eq!(session_id, id);
-                Some((phase, level))
+                Some((phase, level, transcript))
             } else {
                 None
             }
         })
         .collect::<Vec<_>>();
+    let live = || "instruction".to_string();
     assert_eq!(
         phases,
         vec![
-            (LessComputerVoicePhase::Starting, 0.0),
-            (LessComputerVoicePhase::Recording, 0.0),
-            (LessComputerVoicePhase::Recording, 0.7),
-            (LessComputerVoicePhase::Transcribing, 0.0),
-            (LessComputerVoicePhase::Idle, 0.0)
+            (LessComputerVoicePhase::Starting, 0.0, String::new()),
+            // The fixture ASR streams its text as a live partial at start.
+            (LessComputerVoicePhase::Starting, 0.0, live()),
+            (LessComputerVoicePhase::Recording, 0.0, live()),
+            (LessComputerVoicePhase::Recording, 0.7, live()),
+            (LessComputerVoicePhase::Transcribing, 0.0, live()),
+            (LessComputerVoicePhase::Idle, 0.0, live())
         ]
     );
     std::fs::remove_dir_all(path).unwrap();

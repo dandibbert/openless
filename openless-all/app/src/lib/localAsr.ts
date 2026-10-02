@@ -1,21 +1,26 @@
-// localAsr.ts — IPC + 事件类型 for 本地 ASR 引擎与模型管理。
+// localAsr.ts — IPC + event types for the local ASR engines and model management.
 //
-// 后端命令定义：openless-all/app/src-tauri/src/commands.rs `local_asr_*`
-// 事件：local-asr-download-progress / local-asr-token
+// Backend command definitions: openless-all/app/src-tauri/src/commands.rs `local_asr_*`
+// Events: local-asr-download-progress / local-asr-token
 //
-// 注意：模型文件清单与尺寸不在此处硬编码 —— 通过
-// `fetchLocalAsrRemoteInfo()` 实时从 HuggingFace tree API 拉取。
+// Note: the model file list and sizes are not hardcoded here — they are fetched live from
+// the selected model source via `fetchLocalAsrRemoteInfo()`.
 
 import { invokeOrMock } from './ipc';
 import type { OS } from '../components/WindowChrome';
 
-export function isLocalAsrModelSupportedOnOs(modelId: string, os: OS): boolean {
-  if (modelId.startsWith('whisper-')) return os === 'mac';
-  if (modelId.startsWith('qwen3-asr-')) return os === 'mac' || os === 'linux';
-  return true;
+export function isLocalAsrModelSupportedOnOs(
+  model: Pick<LocalAsrModelStatus, 'runtime' | 'family'>,
+  os: OS,
+): boolean {
+  if (model.runtime === 'foundry' || model.runtime === 'sherpa_onnx') return os === 'win';
+  if (model.runtime !== 'generic') return false;
+  if (model.family === 'whisper') return os === 'mac';
+  if (model.family === 'qwen3' || model.family === 'qwen3_asr') return os === 'mac';
+  return false;
 }
 
-export type LocalAsrMirror = 'huggingface' | 'hf-mirror';
+export type LocalAsrMirror = 'huggingface' | 'hf-mirror' | 'modelscope';
 
 export interface LocalAsrSettings {
   providerId: string;
@@ -23,7 +28,7 @@ export interface LocalAsrSettings {
   mirror: string;
   modelsBaseDir: string | null;
   modelsRootDir: string;
-  /** macOS/Linux 编入 C 引擎；MLX 仅在 macOS 可用。 */
+  /** Tauri 仅 macOS 编入本地 C 引擎；MLX 仅在 macOS 可用。 */
   engineAvailable: boolean;
 }
 
@@ -36,6 +41,7 @@ export interface LocalAsrStorageSettings {
 
 export interface LocalAsrModelStatus {
   id: string;
+  runtime: LocalAsrRuntime;
   hfRepo: string;
   displayName: string;
   family: string;
@@ -225,6 +231,7 @@ const MOCK_SETTINGS: LocalAsrSettings = {
 const MOCK_MODELS: LocalAsrModelStatus[] = [
   {
     id: 'qwen3-asr-0.6b',
+    runtime: 'generic',
     hfRepo: 'Qwen/Qwen3-ASR-0.6B',
     displayName: 'Qwen3 ASR 0.6B',
     family: 'qwen3_asr',
@@ -236,6 +243,7 @@ const MOCK_MODELS: LocalAsrModelStatus[] = [
   },
   {
     id: 'qwen3-asr-1.7b',
+    runtime: 'generic',
     hfRepo: 'Qwen/Qwen3-ASR-1.7B',
     displayName: 'Qwen3 ASR 1.7B',
     family: 'qwen3_asr',
@@ -295,7 +303,7 @@ export function fetchLocalAsrRemoteInfo(
   }));
 }
 
-/** HF 模型卡片：下载量 / 收藏 / 简介（下载弹窗右侧展示）。 */
+/** HF model card: downloads / likes / description (shown on the right of the download modal). */
 export interface HfModelCard {
   modelId: string;
   mirror: string;
@@ -326,7 +334,7 @@ export function deleteLocalAsrModel(modelId: string): Promise<void> {
   return invokeOrMock('local_asr_delete_model', { modelId }, () => undefined);
 }
 
-/** 清理中断下载遗留的 staging 目录，不触碰已安装模型。 */
+/** Cleans up staging directories left by interrupted downloads; installed models are untouched. */
 export function cleanupIncompleteLocalAsrModel(modelId: string): Promise<void> {
   return invokeOrMock('local_asr_cleanup_incomplete', { modelId }, () => undefined);
 }
@@ -365,7 +373,7 @@ export function testLocalAsrModel(modelId: string): Promise<LocalAsrTestResult> 
   }));
 }
 
-/** 验证设置页中的本地渠道，不改变全局当前渠道。 */
+/** Validates a local channel from the settings page without changing the globally active channel. */
 export function testLocalAsrChannel(channelId: string): Promise<LocalAsrTestResult> {
   return invokeOrMock('local_asr_test_channel', { channelId }, () => ({
     backend: 'mock',

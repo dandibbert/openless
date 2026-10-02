@@ -1,6 +1,193 @@
 import type { zhCN } from './zh-CN';
 
 export const de: typeof zhCN = {
+  cloudSyncE2ee: {
+    protocolTitle: 'Cloud-Sync: Vereinbarung und Datenschutz',
+    protocolIntro:
+      'OpenLess und seine unabhängigen Entwickler respektieren Ihre Privatsphäre und schützen Ihre Daten. Lesen Sie diese Hinweise, bevor Sie fortfahren.',
+    protocolPasswordTitle: 'Synchronisierungspasswort sicher aufbewahren',
+    protocolPassword:
+      'Passwort und Entschlüsselungsschlüssel werden lokal verwendet und nicht an den Sync-Dienst gesendet. Geht das Passwort verloren und kann kein Gerät das Backup mehr entsperren, können wir den Inhalt nicht wiederherstellen.',
+    protocolEncryptionTitle: 'Vor dem Hochladen lokal verschlüsseln',
+    protocolEncryption:
+      'Einstellungen, API-Schlüssel und Textverlauf werden auf diesem Gerät verschlüsselt. Backup-Inhalte werden als Geheimtext übertragen und gespeichert. Der Sync-Dienst kann Ihre API-Schlüssel daraus weder lesen noch verwenden und führt damit keine Modellanfragen aus.',
+    protocolExcludedTitle: 'Anmeldestatus und sichtbare Metadaten',
+    protocolExcluded:
+      'Das Backup enthält weder Sync-Passwort noch Entschlüsselungsschlüssel, von OpenLess verwaltete GitHub/OAuth-Anmeldedaten, Zugriffstoken oder private Geräteschlüssel. Die Kontoanmeldung verarbeitet notwendige Zugangsdaten separat. Kontokennung, Größe, Versionen und Sync-Zeiten bleiben für den Server sichtbar.',
+    protocolCheck:
+      'Ich habe diese Vereinbarung gelesen, verstehe den Umfang und bewahre mein Sync-Passwort sicher auf.',
+    protocolBack: 'Zurück zum Umfang',
+    protocolConfirm: 'Gelesen und bestätigen',
+    setupPromptTitle: 'Einrichtung verschlüsselt sichern?',
+    setupPromptBody:
+      'Die Dienste sind eingerichtet. Einstellungen, API-Schlüssel und Textverlauf werden auf diesem Gerät verschlüsselt. Erst nach Ihrer Zustimmung und Aktivierung werden Daten hochgeladen.',
+    setupPromptLater: 'Jetzt nicht',
+    setupPromptOpen: 'Verschlüsselte Synchronisierung',
+    title: 'Verschlüsselte Cloud-Synchronisierung',
+    description: 'Vor der Synchronisierung mit deinem GitHub-Konto auf diesem Gerät verschlüsseln.',
+    enable: 'Verschlüsselte Synchronisierung aktivieren',
+    setPassword: 'Sync-Passwort festlegen',
+    stepEnableTitle: 'Schritt 1 von 3: Synchronisierung einschalten',
+    stepEnableDetail: 'Den Schalter verwenden. Nach der Bestätigung folgt das Sync-Passwort.',
+    stepPasswordTitle: 'Schritt 2 von 3: Sync-Passwort festlegen',
+    stepPasswordDetail: 'Noch ein Schritt. Die Synchronisierung startet erst nach dem Passwort.',
+    stepUnlockTitle: 'Schritt 2 von 3: Dieses Gerät entsperren',
+    stepUnlockDetail: 'Noch ein Schritt. Sync-Passwort eingeben, um dieses Gerät zu entsperren.',
+    stepClosedTitle: 'Synchronisierung ist aus',
+    stepClosedDetail: 'Die Cloud-Sicherung bleibt. Schalter einschalten, um fortzufahren.',
+    stepDoneTitle: 'Schritt 3 von 3: Synchronisierung ist bereit',
+    stepDoneDetail: 'Dieses Gerät ist entsperrt und die Synchronisierung ist an.',
+    stepPreparingTitle: 'Nächster Schritt wird geöffnet',
+    stepPreparingDetail: 'Hinweis bestätigt. Als Nächstes legen Sie das Sync-Passwort fest.',
+    stepFollowDetail: 'Mit der Schaltfläche in dieser Zeile fortfahren.',
+    refresh: 'Status aktualisieren',
+    loading: 'Synchronisierungsstatus wird geprüft…',
+    signIn: 'Mit GitHub anmelden',
+    signOut: 'Abmelden',
+    account: 'Synchronisierungskonto',
+    keyLocked: 'Auf diesem Gerät gesperrt',
+    keyUnlocked: 'Auf diesem Gerät entsperrt',
+    hasSnapshot: 'Eine verschlüsselte Cloud-Sicherung ist verfügbar.',
+    noSnapshot: 'Noch keine verschlüsselte Cloud-Sicherung.',
+    snapshotUnknown: 'Cloud-Sicherung noch nicht geprüft.',
+    lastSync: 'Zuletzt synchronisiert: {{time}}',
+    syncNow: 'Jetzt synchronisieren',
+    checkPending: 'Ausstehendes Ergebnis prüfen',
+    unlock: 'Entsperren',
+    lock: 'Dieses Gerät sperren',
+    changePassword: 'Sync-Passwort ändern',
+    restore: 'Cloud-Wiederherstellung prüfen',
+    delete: 'Cloud-Sicherung löschen',
+    working: 'Wird verarbeitet…',
+    cancelTask: 'Aktuellen Vorgang abbrechen',
+    cancelRequested: 'Abbruch angefordert. Der Vorgang wird beendet.',
+    done: 'Synchronisierungseinstellungen aktualisiert.',
+    restored: 'Cloud-Daten wiederhergestellt. Gerätespezifische Einstellungen prüfen.',
+    retryAfter: 'In {{seconds}} Sekunden erneut versuchen.',
+    passwordWarning:
+      'Bewahre dein Sync-Passwort sicher auf. Es ist nicht wiederherstellbar; bei Verlust können Cloud-Daten unlesbar werden.',
+    consentTitle: 'Ende-zu-Ende-verschlüsselte Synchronisierung aktivieren',
+    consentDescription:
+      'Die Synchronisierung umfasst Dienstzugangsdaten und private Textverläufe. Alles wird vor dem Upload lokal verschlüsselt. Prüfe zuerst den vollständigen Umfang.',
+    scopeSummary: 'Vollständigen Umfang anzeigen',
+    consentCheck:
+      'Ich verstehe den Umfang und stimme der verschlüsselten Synchronisierung dieser Daten zu.',
+    continue: 'Weiter',
+    createTitle: 'Sync-Passwort erstellen',
+    unlockTitle: 'Cloud-Sicherung entsperren',
+    passwordTitle: 'Sync-Passwort ändern',
+    create: 'Verschlüsselte Sicherung erstellen',
+    password: 'Sync-Passwort',
+    newPassword: 'Neues Sync-Passwort',
+    currentPassword: 'Aktuelles Sync-Passwort',
+    confirmPassword: 'Neues Passwort bestätigen',
+    passwordPolicy:
+      '12–128 Zeichen mit Groß- und Kleinbuchstaben sowie einer Zahl. Keine üblichen Passwörter verwenden.',
+    rememberKey: 'Entsperrschlüssel im sicheren Speicher dieses Geräts merken',
+    disableTitle: 'Verschlüsselte Synchronisierung ausschalten?',
+    disableDescription:
+      'Weitere Synchronisierung wird gestoppt. Cloud-Sicherung und lokale Daten bleiben erhalten. Löschen ist eine separate Aktion.',
+    confirmDisable: 'Synchronisierung ausschalten',
+    deleteTitle: 'Verschlüsselte Cloud-Sicherung löschen?',
+    deleteDescription:
+      'Nur die Cloud-Sicherung dieses Kontos wird gelöscht. Lokale Daten bleiben. Für ein anderes Gerät wird danach eine neue Sicherung benötigt.',
+    backupRetention:
+      'Nach dem Löschen können Sicherungskopien des Dienstes bis zu {{days}} Tage aufbewahrt werden.',
+    deleteCheck: 'Ich bestätige die Löschung dieser Cloud-Sicherung.',
+    confirmDelete: 'Cloud-Sicherung löschen',
+    restoreTitle: 'Wiederherstellung prüfen',
+    restoreDescription:
+      'Prüfe die Datenkategorien. Vertrauliche Werte bleiben verborgen. Ohne Bestätigung wird nichts wiederhergestellt.',
+    deviceReview:
+      'Nach der Wiederherstellung {{count}} Geräteeinstellungen prüfen, etwa Tastenkürzel, Modellpfade, Mikrofone und Systemrechte.',
+    restoreMode: 'Wiederherstellungsart',
+    merge: 'Zusammenführen und Konflikte lösen',
+    replace: 'Synchronisierte lokale Daten durch Cloud-Daten ersetzen',
+    replaceWarning:
+      'Lokale Daten im Sync-Umfang werden ersetzt. Zum Behalten lokaler Änderungen Zusammenführen wählen.',
+    restoreCheck: 'Ich habe Wiederherstellungsart und Konfliktentscheidungen geprüft.',
+    applyRestore: 'Wiederherstellung bestätigen',
+    conflictProgress: '{{selected}} von {{total}} Konflikten gelöst',
+    conflictItem: 'Konflikt {{index}} · {{category}}',
+    conflictLocal: 'Lokal behalten',
+    conflictCloud: 'Cloud verwenden',
+    previous: 'Zurück',
+    next: 'Weiter',
+    scope: {
+      preferences: 'App-Einstellungen und Oberfläche.',
+      credentials:
+        'ASR-, LLM- und Omni-Kanäle samt API-Schlüsseln, IDs, Access Keys und Secret Keys.',
+      personal: 'Wörterbuch, eigene Wortlisten, Korrekturen, Stilpakete und Symbole.',
+      history: 'Alle Diktat- und Kurznotiz-Texte sowie Aktivitätsstatistiken.',
+      device: 'Geräteprofile zur Prüfung auf dem Zielgerät.',
+      excluded:
+        'Nicht enthalten: OAuth-Anmeldesitzungen, Sync-Passwörter oder abgeleitete Schlüssel, OS-Zugangsdaten, PINs, Geräteberechtigungen, Originalaufnahmen oder Modellgewichte.',
+    },
+    states: {
+      disabled: 'Synchronisierung aus',
+      sign_in_required: 'GitHub-Anmeldung erforderlich',
+      unlock_required: 'Zum Entsperren Passwort eingeben',
+      ready: 'Aktuell',
+      pending: 'Lokale Änderungen warten auf Synchronisierung',
+      syncing: 'Synchronisierung läuft',
+      conflict: 'Konflikte prüfen',
+      failed: 'Synchronisierung benötigt Aufmerksamkeit',
+      outcome_unknown: 'Cloud-Ergebnis noch unbestätigt',
+      recovery_required: 'Lokale Wiederherstellung erforderlich',
+    },
+    categories: {
+      preferences: 'App-Einstellungen',
+      ui_preferences: 'Oberfläche',
+      channels: 'Dienstkanäle und Zugangsdaten',
+      provider_credentials: 'Dienstzugangsdaten',
+      dictionary: 'Wörterbuch',
+      vocabulary_presets: 'Eigene Wortlisten',
+      corrections: 'Korrekturen',
+      style_packs: 'Stilpakete und Symbole',
+      history: 'Textverlauf',
+      activity: 'Aktivitätsstatistiken',
+      device_profile: 'Geräteprofile',
+      other: 'Weitere Sync-Daten',
+    },
+    conflictReasons: {
+      both_modified: 'Lokale und Cloud-Version wurden geändert.',
+      delete_modify: 'Eine Version wurde gelöscht, die andere geändert.',
+      no_common_baseline: 'Keine gemeinsame Ausgangsversion. Wähle die zu behaltende Version.',
+      other: 'Lokale oder Cloud-Version wählen. Werte werden nicht angezeigt.',
+    },
+    errors: {
+      unknown: 'Vorgang fehlgeschlagen. Status aktualisieren und erneut versuchen.',
+      signIn: 'Erneut bei GitHub anmelden.',
+      unlock: 'Dieses Gerät zuerst mit dem Sync-Passwort entsperren.',
+      unavailable:
+        'Verschlüsselte Synchronisierung nicht verfügbar. Native App verwenden und Dienst später prüfen.',
+      weakPassword: 'Ein stärkeres Passwort mit passender Länge und Zeichenwahl verwenden.',
+      passwordMismatch: 'Die Passwörter stimmen nicht überein.',
+      invalidPassword:
+        'Passwort entsperrt die Sicherung nicht oder verschlüsselte Daten konnten nicht geprüft werden.',
+      secureStorage:
+        'Zugriff auf sicheren Speicher verweigert. Berechtigungen prüfen oder ohne gespeicherten Schlüssel entsperren.',
+      changed: 'Daten wurden geändert. Dialog schließen, aktualisieren und neue Vorschau prüfen.',
+      accountChanged: 'GitHub-Konto geändert. Vor dem Fortfahren aktualisieren.',
+      busy: 'Ein Sync-Vorgang läuft. Warten oder zuerst abbrechen.',
+      cancelled: 'Vorgang abgebrochen.',
+      network: 'Sync-Dienst nicht erreichbar. Verbindung prüfen und erneut versuchen.',
+      rateLimited: 'Zu viele Anfragen. Vor erneutem Versuch warten.',
+      outcomeUnknown:
+        'Cloud-Ergebnis unbestätigt. Ausstehenden Vorgang prüfen, bevor eine neue Sicherung erstellt wird.',
+      recovery:
+        'Lokale Wiederherstellung nötig. Daten dieses Geräts behalten und Cloud-Sicherung nicht überschreiben.',
+      rolledBack:
+        'Wiederherstellung fehlgeschlagen; lokale Änderungen zurückgesetzt. Vor erneutem Versuch aktualisieren.',
+      tooLarge: 'Verschlüsselte Sicherung überschreitet das Größenlimit.',
+      reviewRequired: 'Zuerst Sync-Umfang und Wiederherstellungsvorschau prüfen.',
+      choicesRequired: 'Für jeden Konflikt lokal oder Cloud wählen.',
+      invalidData:
+        'Verschlüsselte Sicherung nicht verifizierbar. Lokale Daten wurden nicht ersetzt.',
+      localData:
+        'Die Daten auf diesem Gerät konnten nicht vorbereitet werden. Status aktualisieren und erneut versuchen.',
+    },
+  },
   cloudSync: {
     title: 'Cloud-Synchronisierung',
     description:
@@ -107,9 +294,22 @@ export const de: typeof zhCN = {
     errorPrefix: 'Fortsetzen fehlgeschlagen: ',
     question: 'Eine Frage stellen',
     edit: 'Auswahl bearbeiten',
+    compose: 'Schreibhilfe',
     cancel: 'Abbrechen',
   },
   qa: {
+    compact: {
+      closeError: 'Schließen fehlgeschlagen. Erneut versuchen.',
+      sendError: 'Senden fehlgeschlagen. Deine Eingabe bleibt erhalten. Erneut versuchen.',
+      microphoneError: 'Die Mikrofonaktion ist fehlgeschlagen. Erneut versuchen.',
+      modeError: 'Der Bearbeitungsmodus wurde nicht geändert. Erneut versuchen.',
+      conversation: 'Aktuelles Gespräch',
+      sending: 'Deine Frage wird gesendet…',
+      addUnavailable: 'Inhalt hinzufügen · noch nicht verfügbar',
+      browserUnavailable: 'Vorschau führt keine Befehle aus',
+      answer: 'OpenLess-Antwort',
+      layoutError: 'Das Fenster konnte nicht vergrößert werden. Schließe und öffne es erneut.',
+    },
     title: 'Nachfragen',
     headerHint: 'Jederzeit fragen',
     thinking: 'Denkt nach…',
@@ -142,6 +342,87 @@ export const de: typeof zhCN = {
     editInstructionMode: 'Bearbeitungsanweisung',
   },
   lessComputer: {
+    activity: {
+      process: 'Ablauf',
+      count: '{{count}} Aktivitäten',
+      count_one: '{{count}} Aktivität',
+      count_other: '{{count}} Aktivitäten',
+      finished: 'Abgeschlossen',
+      stopped: 'Gestoppt',
+      search: 'Suche',
+      searchRunning: 'Wird gesucht…',
+      read: 'Lesen',
+      readRunning: 'Wird gelesen…',
+      command: 'Befehle',
+      commandRunning: 'Befehle werden ausgeführt…',
+      edit: 'Bearbeitung',
+      editRunning: 'Wird bearbeitet…',
+      web: 'Webseiten',
+      webRunning: 'Webseiten werden gelesen…',
+      other: 'Werkzeuge',
+      otherRunning: 'In Arbeit…',
+    },
+    desktop: {
+      approvedSubmitted: 'Freigabe gesendet',
+      deniedSubmitted: 'Ablehnung gesendet',
+      agents: 'Deine Agenten',
+      configured: 'Aktuell konfiguriert',
+      agentSettings: 'In Einstellungen wählen',
+      sessionUnavailable: 'Neue Sitzung · nicht verfügbar',
+      signedIn: 'Angemeldet',
+      signIn: 'Anmelden',
+      currentSession: 'Aktuelles Gespräch',
+      minimize: 'Minimieren',
+      maximize: 'Maximieren / Wiederherstellen',
+      windowError: 'Die Fensteraktion ist fehlgeschlagen. Erneut versuchen.',
+      idle: 'Wartet auf eine Aufgabe',
+      waitingApproval: 'Wartet auf Freigabe',
+      submittingApproval: 'Wird gesendet…',
+      approvalError: 'Die Freigabe wurde nicht gesendet. Erneut versuchen.',
+      approvalExpired: 'Dieser Durchlauf ist beendet. Eine Freigabe ist nicht mehr möglich.',
+      sendError: 'Senden fehlgeschlagen. Deine Eingabe bleibt erhalten. Erneut versuchen.',
+      browserUnavailable: 'Die Browser-Vorschau führt keine Befehle aus. Nutze die Desktop-App.',
+      inputHint: 'Enter zum Senden · Umschalt + Enter für eine neue Zeile',
+      apiCost: 'API-Kosten dieses Durchlaufs',
+      emptyHint: 'Beschreibe eine Aufgabe, tippe aufs Mikrofon oder nutze dein Sprach-Kürzel.',
+      showInspector: 'Arbeitsbereich einblenden',
+      hideInspector: 'Arbeitsbereich ausblenden',
+      inspectorTitle: 'Arbeitsbereich',
+      inspectorStatus: 'Status',
+      inspectorTurn: 'Diese Runde',
+      toolCalls: 'Tool-Aufrufe',
+      pendingApprovals: 'Wartet auf dich',
+      inspectorVoice: 'Spracheingabe',
+      voiceShortcutOff:
+        'Kein Sprach-Kürzel festgelegt. Du kannst es in den Einstellungen aktivieren.',
+      voiceModesHint:
+        'Mikrofon: Der Text landet im Eingabefeld, damit du ihn vor dem Senden bearbeiten kannst. Sprachtaste: wird beim Stoppen direkt an den Agenten gesendet.',
+      copy: 'Kopieren',
+      copied: 'Kopiert',
+      messagePlaceholder: 'Nachricht an {{agent}}',
+    },
+    voice: {
+      dictate: 'Ins Eingabefeld diktieren',
+      voiceMode: 'Sprachmodus (sendet beim Stoppen)',
+      stopTask: 'Aufgabe stoppen',
+      cancel: 'Aufnahme abbrechen',
+      confirmDictation: 'Diktat beenden',
+      stopAndSend: 'Stoppen und senden',
+      listening: 'Hört zu…',
+      starting: 'Mikrofon wird vorbereitet…',
+      transcribing: 'Wird transkribiert…',
+      empty: 'Nichts erkannt. Bitte noch einmal.',
+      failed: 'Spracherkennung fehlgeschlagen. Bitte erneut versuchen.',
+      startFailed: 'Aufnahme konnte nicht starten: {{message}}',
+      taskCancelFailed: 'Die Aufgabe wurde nicht gestoppt. Bitte erneut versuchen.',
+      dictateCaption:
+        'Tippe auf ✓, wenn du fertig bist – der Text landet zum Bearbeiten im Eingabefeld · Esc bricht ab',
+      submitCaption: 'Tippe auf ↑, um direkt an den Agenten zu senden · Esc bricht ab',
+      stopHint: 'Aufgabe läuft – tippe auf ■ zum Stoppen',
+      holdHint: '{{key}} gedrückt halten zum Sprechen',
+      toggleHint: '{{key}} drücken zum Starten oder Beenden',
+      autoHint: '{{key}} halten oder kurz drücken zum Sprechen',
+    },
     title: 'Less Computer',
     subtitle: 'Was soll dein Computer tun?',
     you: 'Du',
@@ -171,6 +452,7 @@ export const de: typeof zhCN = {
     marketplace: 'Marktplatz',
     translation: 'Übersetzung',
     selectionAsk: 'Nachfragen',
+    quickNote: 'Schnellnotizen',
     corrections: 'Korrekturen',
     polishMode: 'Überarbeitungsmodus',
     group: {
@@ -302,6 +584,7 @@ export const de: typeof zhCN = {
       translation:
         'Übersetzung: Beim Sprechen Shift gedrückt halten, um Text in der Zielsprache einzufügen',
       selectionAsk: 'Zum ausgewählten Text fragen: Text auswählen und eine Frage dazu sprechen',
+      quickNote: 'Schnellnotizen: Audio speichern und später wiedergeben',
       settings: 'Einstellungen: Kurzbefehle, Dienste, Datenschutz und Updates',
     },
     footer: {
@@ -505,14 +788,24 @@ export const de: typeof zhCN = {
     clearFailed: 'Verlauf konnte nicht geleert werden: {{err}}',
     deleteFailed: 'Eintrag konnte nicht gelöscht werden: {{err}}',
     copyFailed: 'Kopieren fehlgeschlagen: {{err}}',
+    actionMenu: 'Aufnahmeaktionen',
     playRecording: 'Aufnahme abspielen',
     audioLoading: 'Wird geladen…',
     audioDecodeFailed: 'Audio konnte nicht dekodiert werden: {{err}}',
     exportRecording: 'Aufnahme exportieren',
     exportFailed: 'Export fehlgeschlagen: {{err}}',
+    chooseSaveDirectory: 'Speicherort für Transkriptdateien wählen',
+    saveDirectoryPrompt: 'Ordner für Transkriptdateien eingeben',
+    saveDirectory: 'Speicherort für Transkriptdateien festlegen',
+    changeSaveDirectory: 'Speicherort für Transkriptdateien ändern',
+    resetSaveDirectory: 'Standard-Speicherort verwenden',
+    defaultSaveDirectory: 'Bei jedem Export wählen',
+    saveDirectoryFailed: 'Speicherort konnte nicht aktualisiert werden: {{err}}',
     retranscribe: 'Erneut transkribieren',
     retranscribing: 'Wird transkribiert…',
     retranscribeFailed: 'Erneute Transkription fehlgeschlagen: {{err}}',
+    showRaw: 'Rohtext anzeigen',
+    hideRaw: 'Rohtext ausblenden',
     rawLabel: 'Rohtext',
     rawEmpty: '(leer)',
     selectHint: 'Wähle links einen Eintrag aus, um die Details anzuzeigen.',
@@ -528,6 +821,7 @@ export const de: typeof zhCN = {
     inserted: 'Eingefügt',
     pasteSent: 'Einfügebefehl gesendet',
     copiedFallback: 'Kopiert (mit {{shortcut}} einfügen)',
+    notRequested: 'Nicht eingefügt',
     insertFailed: 'Einfügen fehlgeschlagen',
     confirmClear:
       'Alle {{count}} Verlaufseinträge löschen? Dies kann nicht rückgängig gemacht werden.',
@@ -551,6 +845,13 @@ export const de: typeof zhCN = {
       clear: 'Ergebnisse leeren',
     },
   },
+  vocabLearning: {
+    open: 'Wort merken',
+    label: 'Das richtige Wort eingeben',
+    confirm: 'Bestätigen und zum Wörterbuch hinzufügen',
+    saved: 'Gespeichert. Im Wörterbuch verwalten.',
+    failed: 'Speichern fehlgeschlagen: {{error}}',
+  },
   vocabCard: {
     title: 'Dieses Wort merken?',
     accept: 'Merken',
@@ -564,6 +865,9 @@ export const de: typeof zhCN = {
   },
   vocab: {
     selectAllVisible: 'Aktuelle Ergebnisse auswählen',
+    selecting: 'Auswählen',
+    doneSelecting: 'Fertig',
+    disabledWord: 'Aus',
     selectedCount: 'Ausgewählte Wörter: {{count}}',
     selectWord: '„{{phrase}}“ auswählen',
     deleteSelected: 'Auswahl löschen ({{count}})',
@@ -587,7 +891,7 @@ export const de: typeof zhCN = {
     editEmpty: 'Das Wort darf nicht leer sein.',
     filter: {
       all: 'Alle',
-      auto: 'Automatisch hinzugefügt',
+      auto: 'Bestätigt',
       manual: 'Manuell hinzugefügt',
     },
     searchPlaceholder: 'Suchen',
@@ -599,7 +903,7 @@ export const de: typeof zhCN = {
     newWordTemplates: 'Vorlagen',
     newWordTemplateCount: 'Wörter: {{count}}',
     newWordAddSelected: 'Auswahl hinzufügen',
-    learnedSection: 'Automatisch gesammelt ({{count}})',
+    learnedSection: 'Bestätigt ({{count}})',
     removeAllLearned: 'Alle entfernen',
     corrections: {
       title: 'Korrekturregeln',
@@ -766,6 +1070,7 @@ export const de: typeof zhCN = {
       deleteImported: 'Löschen',
       deleteConfirm: '„{{name}}“ löschen? Dies kann nicht rückgängig gemacht werden.',
       deleteSuccess: '„{{name}}“ gelöscht.',
+      undoDelete: 'Rückgängig',
       deleteFailed: 'Paket konnte nicht gelöscht werden: {{err}}',
       summaryCurrentEmpty: 'Noch kein Paket ausgewählt',
       editorTitle: 'Paket bearbeiten',
@@ -898,6 +1203,23 @@ export const de: typeof zhCN = {
       step2: 'Wähle Text in einer beliebigen App aus.',
     },
   },
+  quickNote: {
+    kicker: 'Schnellnotizen',
+    title: 'Schnellnotizen',
+    desc: 'Audio dauerhaft behalten, mit Wiedergabe, Export, Neu-Transkription und Überarbeitung.',
+    recording: 'Aufnahme läuft …',
+    failedTitle: 'Aufnahme benötigt Aufmerksamkeit',
+    emptyTitle: 'Unbenannte Aufnahme',
+    noTranscript: 'Noch keine Transkription.',
+    applyResult: 'Auf Notiz anwenden',
+    applying: 'Wird angewendet …',
+    shortcutTitle: 'Schnellnotizen-Kurzbefehl',
+    shortcutDesc: 'Einmal drücken zum Aufnehmen, erneut drücken zum Speichern.',
+    showShortcut: 'Schnellnotizen-Kurzbefehl anzeigen',
+    repolishNeedsTranscript: 'Bitte zuerst die Audiodatei neu transkribieren.',
+    shareRecording: 'Audio teilen',
+    cancelledTitle: 'Aufnahme abgebrochen',
+  },
   settings: {
     selectionWorkspace: {
       title: 'Assistent für Textauswahl',
@@ -950,12 +1272,33 @@ export const de: typeof zhCN = {
       useSystemProxyDesc:
         'Anfragen verwenden den Systemproxy, wenn diese Option aktiv ist. Andernfalls werden alle Anfragen direkt gesendet, was bei inländischen Diensten meist schneller ist. Ausländische Dienste wie GitHub-Anmeldung und Updates können dann fehlschlagen. Echtzeit-Sprachstreams und Less Computer sind davon unabhängig.',
     },
+    vocabularyLearning: {
+      title: 'Aus Korrekturen lernen',
+      enabled: 'Lernen aus Korrekturen aktivieren',
+      observationSeconds: 'Beobachtungsdauer',
+      observationSecondsHint:
+        'Das aktuelle Eingabefeld nach dem Diktat höchstens 10–60 Sekunden beobachten.',
+      suggestionSeconds: 'Anzeigedauer der Vorschläge',
+      suggestionSecondsHint:
+        'Unbestätigte Vorschläge verfallen nach 5–60 Sekunden ohne Wörterbucheintrag.',
+      maxPhraseChars: 'Maximale Wortlänge',
+      maxPhraseCharsHint:
+        'Original und Ersatz in automatischen Vorschlägen auf 2–32 Zeichen begrenzen. Manuelle Einträge bleiben unverändert.',
+      seconds: '{{count}} s',
+      characters: '{{count}} Zeichen',
+      changeHint:
+        'Änderungen beenden die aktuelle Beobachtung und löschen offene Vorschläge. Sie gelten ab dem nächsten Diktat. Zurücksetzen ändert den Aktivierungsschalter nicht.',
+      reset: 'Parameter zurücksetzen',
+      saveError: 'Speichern fehlgeschlagen. Bitte erneut versuchen.',
+      description:
+        'Nach dem Einfügen werden Änderungen im Eingabefeld bis zu 60 Sekunden lokal erkannt. Wörter werden erst nach Bestätigung gespeichert. Der beobachtete Text wird nicht an ein Modell gesendet. Passwortfelder und bekannte sensible Apps sind ausgeschlossen. Die Unterstützung unter Windows und Android hängt vom Editor ab; Android benötigt Bedienungshilfen. Ausschalten beendet die Beobachtung.',
+    },
     dataStorage: {
       title: 'Datenspeicherung',
       desc: 'Gesprächsverlauf und Kontext, die auf diesem Gerät gespeichert werden.',
       cursorContextLabel: 'Cursorkontext (experimentell)',
       cursorContextDesc:
-        'Liest beim Überarbeiten den Text rund um den Cursor im aktuellen Dokument, damit das Modell gleich klingende Wörter, Eigennamen und Pronomen unterscheiden kann. Bei Aktivierung wird dieser Text mit der Anfrage an deinen LLM-Dienst gesendet; andernfalls wird nichts gelesen. Passwortfelder, Secure Input, Passwortmanager und Terminals werden nie gelesen. Nur unter macOS.',
+        'Text rund um den Cursor zur Überarbeitung an das Modell senden (nur macOS). Diese Einstellung ist vom lokalen Lernen getrennt. Passwortfelder und bekannte sensible Apps sind ausgeschlossen.',
     },
     codingConsole: {
       title: 'Claude-Konsole',
@@ -1116,6 +1459,10 @@ export const de: typeof zhCN = {
       capsuleDesc:
         'Zeigt während der Aufnahme eine halbtransparente Kapsel am unteren Bildschirmrand.',
       capsuleStyleTypeless: 'Kompakter Typeless-Stil',
+      capsuleTranscriptLabel: 'Live-Transkript anzeigen',
+      capsuleTranscriptDesc:
+        'Erkannten Originaltext statt Audiobalken anzeigen. Ohne Streaming erscheint der Text nach der Erkennung. Deaktivieren stellt die bisherige Anzeige wieder her.',
+      capsuleTranscriptFontSize: 'Transkript-Schriftgröße',
       capsuleStyleLabel: 'Kapselstil',
       capsuleStyleSiri: 'Schimmernder Siri-Stil',
       capsuleStyleClassic: 'OpenLess-Standardstil',
@@ -1153,6 +1500,9 @@ export const de: typeof zhCN = {
       comboRecorded: 'Aufgezeichnet',
       comboClear: 'Leeren',
       comboConflict: 'Diese Tastenkombination ist nicht verfügbar',
+      shortcutSaveFailed: 'Tastenkombination konnte nicht gespeichert werden',
+      mouseSideHint:
+        'Mausseitentasten Mouse4 / Mouse5 werden als globale Diktier-Hotkeys unter Windows unterstützt',
       allowNonTsfFallbackLabel: 'Alternative ohne TSF erlauben',
       allowNonTsfFallbackDesc:
         'Windows: Falls das Einfügen über TSF fehlschlägt, wird Unicode-Text dosiert über SendInput eingegeben. Schlägt auch das fehl, wird der Text in die Zwischenablage kopiert.',
@@ -1228,6 +1578,10 @@ export const de: typeof zhCN = {
       verificationUnavailable: 'Die Prüfung wird für diesen Kanal nicht unterstützt',
       passed: 'Prüfung bestanden',
       failed: 'Prüfung fehlgeschlagen · {{reason}}',
+      failedPlain: 'Prüfung fehlgeschlagen',
+      failureKeepsEnabled:
+        'Eine fehlgeschlagene Prüfung schaltet den Dienst nicht ab. Anfragen nutzen weiter den ersten aktivierten Dienst und wechseln nicht automatisch.',
+      reverify: 'Erneut prüfen',
       elapsed: 'Dauer: {{ms}} ms',
       staleResult: 'Das Ergebnis ist älter als 24 Stunden',
       connectionTitle: 'Dienstverbindung',
@@ -1238,6 +1592,8 @@ export const de: typeof zhCN = {
       validationTitle: 'Verbindungsprüfung',
       validationHint:
         'Sendet manuell eine echte Anfrage, um diese Konfiguration zu prüfen. Dabei kann Dienstguthaben verbraucht werden. Das Speichern der Einstellungen führt keine Prüfung aus.',
+      validationHintOmni:
+        'Sendet manuell eine reine Text-Verbindungsanfrage (ohne Aufnahme). Erfolg bedeutet nicht, dass Audio-Diktat funktioniert — bitte mit einer kurzen Aufnahme bestätigen. Dabei kann Dienstguthaben verbraucht werden.',
       autoSaveHint:
         'Änderungen werden automatisch gespeichert. Anschließend kannst du die Verbindung manuell prüfen.',
       nameHint:
@@ -1320,6 +1676,8 @@ export const de: typeof zhCN = {
         mimo: 'Xiaomi MiMo',
         cometapi: 'CometAPI',
         openrouterFree: 'OpenRouter (kostenlose Modelle)',
+        requesty: 'Requesty',
+        apiRoute: 'API Route',
         orcarouter: 'OrcaRouter',
         alibabaCoding: 'Alibaba Cloud Coding Plan',
         codingPlanX: 'CodingPlanX',
@@ -1335,6 +1693,7 @@ export const de: typeof zhCN = {
         asrSiliconflow: 'SiliconFlow SenseVoice',
         asrStepfun: 'StepFun StepAudio ASR',
         asrZhipu: 'Zhipu GLM-ASR',
+        asrMinimax: 'MiniMax ASR',
         asrGroq: 'Groq Whisper-large-v3',
         asrWhisper: 'OpenAI Whisper (kompatibel)',
         asrOpenrouter: 'OpenRouter Whisper',
@@ -1457,6 +1816,17 @@ export const de: typeof zhCN = {
       bailianVocabularyIdLabel: 'Wörterbuch-ID für Begriffe (optional)',
       bailianVocabularyIdNote:
         'Wenn du bei DashScope ein Begriffswörterbuch erstellt hast, gib seine vocab-... ID ein. Leer lassen, um keine Begriffe zu übergeben.',
+      bailianProtocolLabel: 'API-Typ',
+      bailianProtocolNote:
+        'Die manuelle Auswahl ersetzt die Erkennung anhand des Modellnamens und gilt pro Kanal für Prüfung und Aufnahme. Beachten Sie die Modelldokumentation.',
+      bailianProtocolOptions: {
+        auto: 'Automatisch',
+        'dashscope-realtime': 'Echtzeit (DashScope)',
+        'qwen-realtime': 'Echtzeit (Qwen Realtime)',
+        multimodal: 'Synchron, nicht in Echtzeit (Fun-ASR / Qwen-Audio)',
+        'qwen-multimodal': 'Synchron, nicht in Echtzeit (Qwen3-ASR)',
+        'async-transcription': 'Asynchron (Dateitranskription)',
+      },
       bailianModelRealtimeHint: 'Echtzeitmodell · transkribiert während des Sprechens.',
       bailianModelSyncFileHint:
         'Synchrones Aufnahmemodell · transkribiert nach dem Beenden (einzelne Aufnahme ≤ 5 Min.).',
@@ -1487,6 +1857,8 @@ export const de: typeof zhCN = {
       selectModel: 'Wähle ein Modell, um das Feld oben auszufüllen',
       modelSaved: 'Modell {{model}} gespeichert.',
       validateSuccess: 'Verbindungsprüfung bestanden.',
+      validateSuccessOmni:
+        'Text-Verbindung bestanden. Das bedeutet nicht, dass Audio-Diktat funktioniert — bitte mit einer kurzen Aufnahme bestätigen.',
       validateFailed: 'Verbindungsprüfung fehlgeschlagen.',
       providerHttpStatus:
         'Der Anbieter hat HTTP {{status}} zurückgegeben. Prüfe die Berechtigungen des API-Schlüssels oder den Endpunkt.',
@@ -1515,6 +1887,9 @@ export const de: typeof zhCN = {
       descNoAcc:
         'Alle Kurzbefehle gelten global. Falls sie nicht reagieren, prüfe ihren Status unter „Berechtigungen“.',
       startStop: 'Aufnahme starten / beenden',
+      quickNote: 'Schnellnotiz',
+      quickNoteDesc:
+        'Einmal drücken, um eine dauerhafte Audionotiz zu starten, und erneut drücken, um sie zu beenden.',
       cancel: 'Aktuelle Aufnahme abbrechen',
       confirm: 'Einfügen über die Kapsel bestätigen',
       switchStyle: 'Zum vorherigen Stil wechseln',
@@ -1733,6 +2108,23 @@ export const de: typeof zhCN = {
         up: 'Während der Aufnahme nach oben wischen, um ohne Transkription oder Einfügen abzubrechen.',
         down: 'Während der Aufnahme nach unten wischen, um ohne Transkription oder Einfügen abzubrechen.',
       },
+      androidOverlayGestureActionsLabel: 'Wischaktionen des schwebenden Fensters',
+      androidOverlayGestureActionsDesc:
+        'Diese Aktionen gelten während der Aufnahme. Ein normaler Tipp beendet das Diktat; ein Schnellnotiz-Wisch speichert das Audio dauerhaft.',
+      androidOverlayGestureDirection: {
+        up: 'Nach oben',
+        down: 'Nach unten',
+        left: 'Nach links',
+        right: 'Nach rechts',
+      },
+      androidOverlayGestureAction: {
+        none: 'Keine Aktion',
+        quick_note: 'Schnellnotiz',
+        translation: 'Übersetzung',
+        style_pack: 'Stil wechseln',
+        cancel: 'Abbrechen',
+        qa: 'Fragen',
+      },
       windowsIme: {
         installed:
           'Installiert. Die Spracheingabe wechselt vorübergehend zur OpenLess-Eingabemethode.',
@@ -1742,6 +2134,13 @@ export const de: typeof zhCN = {
           'Die Registrierung ist beschädigt. Installiere die OpenLess-Eingabemethode erneut.',
         notWindows: 'Nur unter Windows verfügbar.',
       },
+    },
+    inputMethod: {
+      guidanceTitle: 'OpenLess-Eingabemethode',
+      enableSystemIme:
+        'Aktiviere OpenLess Voice in Android → Tastatur / Eingabemethoden und wähle sie bei Bedarf aus.',
+      longPressLogo:
+        'Halte im OpenLess-Keyboard das Logo oben links gedrückt, um die systemeigenen Tastatureinstellungen zu öffnen.',
     },
     advanced: {
       multimodalPipelineTitle: 'Multimodale Spracherkennung (experimentell)',
@@ -1955,8 +2354,12 @@ export const de: typeof zhCN = {
       omni: 'Multimodal',
       models: 'Lokale Modelle',
       connections: 'Verbindungen',
-      statusConfigured: 'Eingerichtet',
-      statusMissing: 'Nicht eingerichtet',
+      inactive: 'In diesem Modus ungenutzt',
+      inactiveDetail:
+        'Diese Einstellungen bleiben gespeichert, werden aber im aktuellen Erkennungsmodus nicht verwendet.',
+      statusConfigured:
+        'Grüner Punkt: mindestens ein Dienst ist aktiv. Anfragen nutzen den ersten aktivierten Dienst.',
+      statusMissing: 'Roter Punkt: noch kein Dienst ist aktiviert.',
     },
     searchPlaceholder: 'Einstellungskategorie suchen…',
     clearSearch: 'Suche leeren',
@@ -1967,6 +2370,8 @@ export const de: typeof zhCN = {
     autoSaveHint: 'Änderungen werden automatisch gespeichert',
     backToAdvanced: 'Zurück zu Experimente und Erweiterungen',
     advancedPages: {
+      vocabularyLearning:
+        'Aus manuellen Korrekturen lernen; Beobachtung, Bestätigungszeit und Wortlänge einstellen.',
       lessComputer:
         'Wähle einen Agenten und konfiguriere Modell, Berechtigungen und Arbeitsverzeichnis.',
       claudeConsole: 'Erkenne Claude Code und prüfe die Ausgabe von Testaufträgen.',
@@ -1975,31 +2380,36 @@ export const de: typeof zhCN = {
     },
     descriptions: {
       general: 'Mikrofon wählen, Aufnahme und Texteingabe anpassen oder dein Smartphone verbinden.',
+      inputMethod: 'Android-Overlay und Eingabemethode für die mobile Eingabe konfigurieren.',
       shortcuts: 'Kurzbefehle einrichten und Aktionen für ausgewählten Text festlegen.',
       services:
         'Spracherkennungs- und Textverarbeitungsdienste wählen. Kanäle, lokale Modelle und Verbindungen verwalten.',
       appearance: 'Design, Seitenlayout und Sprache der Oberfläche für angenehmes Lesen anpassen.',
       privacy:
         'Systemberechtigungen und Verbindungen prüfen. Verlauf, Aufnahmen und lokale Daten verwalten.',
-      advanced: 'Less Computer, multimodale Verarbeitung und Diagnose nach Bedarf einrichten.',
+      advanced: 'Less Computer und Diagnose nach Bedarf einrichten.',
       about: 'Version, Updatekanal und automatische Updateeinstellungen anzeigen.',
     },
     searchKeywords: {
       general:
         'Mikrofon Aufnahme Eingabe Smartphone Ferneingabe LAN PIN Kapsel Stumm Start Autostart',
+      inputMethod: 'Eingabemethode IME Tastatur Overlay Android',
       shortcuts:
         'Kurzbefehl Hotkey Taste Tastenkombination Auswahl Überarbeitung Sprachbearbeitung',
-      services: 'ASR LLM API Kanal Modell Cloud Lokal Offline Netzwerk Proxy Marktplatz',
+      services:
+        'ASR LLM API Kanal Modell Cloud Lokal Offline Netzwerk Proxy Marktplatz Multimodal Pipeline Omni',
       appearance: 'Design Dunkel Hell Sprache Schrift Textgröße Layout Aktivitätsübersicht',
       privacy:
         'Berechtigung Mikrofon Bedienungshilfen Verlauf Aufnahme Speicher Datenschutz Export',
-      advanced: 'Less Computer Claude Agent Multimodal Omni Diagnose Protokolle Experiment',
+      advanced:
+        'Less Computer Claude Agent Multimodal Omni Diagnose Protokolle Experiment Aus Korrekturen lernen vocabulary learning',
       about: 'Version Beta Stabil Update Aktualisierung',
     },
     sections: {
       appearance: 'Darstellung und Sprache',
       shortcuts: 'Kurzbefehle und Auswahl',
       general: 'Aufnahme und Eingabe',
+      inputMethod: 'Eingabemethode',
       services: 'KI-Dienste und Modelle',
       privacy: 'Berechtigungen und Daten',
       advanced: 'Experimente und Erweiterungen',
@@ -2206,9 +2616,10 @@ export const de: typeof zhCN = {
     groupOther: 'Weitere',
     mirrorLabel: 'Download-Spiegelserver',
     mirrorDesc:
-      'huggingface.co ist die offizielle Quelle. hf-mirror.com ist ein Community-Spiegelserver, der aus Festlandchina oft besser erreichbar ist.',
+      'Wählen Sie HuggingFace, den Community-Spiegelserver oder offizielle ModelScope-Repositories für unterstützte Modelle.',
     mirrorHuggingface: 'Offizielles HuggingFace (huggingface.co)',
     mirrorHfMirror: 'Spiegelserver für Festlandchina (hf-mirror.com)',
+    mirrorModelscope: 'Offizielles ModelScope (modelscope.cn)',
     activeBadge: 'In Verwendung',
     downloadedBadge: 'Heruntergeladen',
     notDownloadedBadge: 'Nicht heruntergeladen',

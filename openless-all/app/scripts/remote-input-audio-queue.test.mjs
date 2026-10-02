@@ -2,14 +2,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 
-const source = await readFile(
-  new URL('../src-tauri/src/remote_server/assets/app.js', import.meta.url),
-  'utf8',
-);
-const html = await readFile(
-  new URL('../src-tauri/src/remote_server/assets/index.html', import.meta.url),
-  'utf8',
-);
+const source = await readFile(new URL('../assets/remote-input/app.js', import.meta.url), 'utf8');
+const html = await readFile(new URL('../assets/remote-input/index.html', import.meta.url), 'utf8');
 
 function fakeElement() {
   const classes = new Set();
@@ -404,7 +398,7 @@ const acknowledge = (page) =>
     }),
   });
 
-// 息屏结束两分钟录音，已发送的帧仍在 stop 之前；重复生命周期事件不会重复结束。
+// Screen lock ends a two-minute recording with already-sent frames still before the stop; repeated lifecycle events don't end twice.
 for (const defaultMode of ['toggle', 'hold']) {
   const page = await openRemotePage({ defaultMode });
   assert.equal(page.element('wake-lock-switch').checked, true);

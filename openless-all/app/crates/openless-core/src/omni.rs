@@ -1,12 +1,13 @@
-//! 多模态（Omni）识别管线（issue #902）的模型通道。
+//! Model channel of the multimodal (Omni) recognition pipeline (issue #902).
 //!
-//! 与 `polish.rs` 的 LLM 客户端不同：这里接收「系统提示词 + 用户文本 + 可选音频」，
-//! 让模型一步基于音频与词典/提示词直接输出最终文本，替代「ASR 转写 + LLM 润色」
-//! 两段式管线。凭据读取独立 `omni` 命名空间，与 asr/llm 配置完全隔离。
+//! Produces text from a system prompt, user text, and optional audio in one call.
+//! Credentials use the independent `omni` namespace.
 //!
-//! 通道：
-//! - OpenAI 兼容 chat completions：user content 的 `input_audio` part 携带 base64 WAV；
-//! - Gemini 原生 generateContent：`inlineData(audio/wav)` part（复用 `llm_gemini.rs`）。
+//! Channels:
+//! - OpenAI-compatible chat completions: the user content carries base64 WAV
+//!   in an `input_audio` part;
+//! - Gemini native generateContent: an `inlineData(audio/wav)` part
+//!   (reuses `llm_gemini.rs`).
 
 use std::collections::HashMap;
 
@@ -16,11 +17,12 @@ use serde_json::{json, Value};
 use crate::polish::{
     append_utf8_sse_chunk, apply_openai_compatible_thinking_control, chat_completions_url,
     extract_assistant_content, finish_utf8_sse_chunks, http_client_builder,
-    openai_model_is_gpt5_family, safe_str_slice, send_with_transient_retry, LLMError,
+    openai_model_omits_custom_temperature, safe_str_slice, send_with_transient_retry, LLMError,
 };
 
 pub const OMNI_GEMINI_PROVIDER_ID: &str = "gemini";
-/// Omni 请求默认超时（秒）。比普通文本润色长：base64 WAV 上传 + 音频模型生成。
+/// Omni request default timeout (seconds). Longer than plain text polish:
+/// base64 WAV upload plus audio-model generation.
 const OMNI_DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 90;
 const BODY_PREVIEW_LIMIT: usize = 200;
 
@@ -40,16 +42,25 @@ impl OmniConfig {
         self.provider_id.trim() == OMNI_GEMINI_PROVIDER_ID
             || self.base_url.contains("generativelanguage.googleapis.com")
     }
+
+    /// DashScope Omni requires a MIME-free data URL and a separate audio format.
+    /// Match the parsed hostname so unrelated compatible endpoints retain bare Base64.
+    fn audio_requires_data_url(&self) -> bool {
+        reqwest::Url::parse(self.base_url.trim())
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+            .is_some_and(|host| host.contains("dashscope") || host.contains("aliyuncs"))
+    }
 }
 
-/// 一次 Omni 调用的构建时快照（provider id + model），落历史归因用。
+/// Build-time snapshot of one Omni call (provider id + model) for history attribution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OmniCallLabel {
     pub provider: String,
     pub model: String,
 }
 
-/// OpenAI 兼容 chat completions 通道（`input_audio` 音频 part）。
+/// OpenAI-compatible chat completions channel (`input_audio` audio part).
 pub struct OpenAICompatibleOmni {
     config: OmniConfig,
     client: reqwest::Client,
@@ -57,8 +68,9 @@ pub struct OpenAICompatibleOmni {
 
 impl OpenAICompatibleOmni {
     pub fn new(config: OmniConfig) -> Self {
-        // 与 OpenAICompatibleLLMProvider 同款：按 (超时, 是否绕过代理) 缓存连接池，
-        // 跨句子复用 TLS 握手。代理开关切换时 net 缓存会清空重建。
+        // Same as OpenAICompatibleLLMProvider: cache the connection pool by
+        // (timeout, proxy-bypass) to reuse TLS handshakes across sentences.
+        // Toggling the proxy switch clears and rebuilds the net cache.
         let timeout = OMNI_DEFAULT_REQUEST_TIMEOUT_SECS;
         let no_proxy =
             crate::net::should_bypass_proxy(&config.base_url, crate::net::use_system_proxy());
@@ -78,12 +90,16 @@ impl OpenAICompatibleOmni {
             "messages": messages,
         });
         if let Some(temperature) = self.config.temperature {
-            // OpenAI 官方 gpt-5 系列只接受默认 temperature=1（issue #857），同润色路径。
+            // OpenAI 官方 gpt-5 / gpt-6 只接受默认 temperature=1（#857 / #1101），同润色路径。
             if !(self.config.provider_id.trim() == "openai"
-                && openai_model_is_gpt5_family(&self.config.model))
+                && openai_model_omits_custom_temperature(&self.config.model))
             {
                 body["temperature"] = json!(temperature);
             }
+        }
+        // DashScope Omni requests text-only output.
+        if self.config.audio_requires_data_url() {
+            body["modalities"] = json!(["text"]);
         }
         apply_openai_compatible_thinking_control(
             &mut body,
@@ -103,7 +119,13 @@ impl OpenAICompatibleOmni {
     ) -> Vec<Value> {
         let user_content = match wav_bytes {
             Some(wav) => {
-                let data = base64::engine::general_purpose::STANDARD.encode(wav);
+                let encoded = base64::engine::general_purpose::STANDARD.encode(wav);
+                // DashScope Omni uses data:;base64 plus the separate format field.
+                let data = if self.config.audio_requires_data_url() {
+                    format!("data:;base64,{encoded}")
+                } else {
+                    encoded
+                };
                 let mut parts = vec![json!({
                     "type": "input_audio",
                     "input_audio": { "data": data, "format": "wav" },
@@ -190,8 +212,8 @@ impl OpenAICompatibleOmni {
             });
         }
 
-        // SSE 流解析与 polish 路径同款：一帧 = 若干行，`\n\n` 分隔，
-        // 每行 `data: {...}` / `data: [DONE]`。
+        // Shared UTF-8 decoding normalizes CRLF to LF; one frame = several
+        // lines separated by `\n\n`, each line `data: {...}` / `data: [DONE]`.
         let mut response = response;
         let mut buffer = String::new();
         let mut utf8_pending: Vec<u8> = Vec::new();
@@ -304,7 +326,8 @@ impl OpenAICompatibleOmni {
     }
 }
 
-/// 多模态通道统一入口：按配置路由到 Gemini 原生或 OpenAI 兼容客户端。
+/// Unified multimodal-channel entry point: routes by config to the Gemini
+/// native or OpenAI-compatible client.
 pub enum OmniProvider {
     Gemini {
         provider: crate::llm_gemini::GeminiProvider,
@@ -349,7 +372,8 @@ impl OmniProvider {
         }
     }
 
-    /// 一次性调用：音频 + 提示词一步输出最终文本；无音频时为纯文本（文本管线复用）。
+    /// One-shot call: audio + prompt produce final text in a single step;
+    /// without audio it's plain text (reused by text pipelines).
     pub async fn complete(
         &self,
         system_prompt: &str,
@@ -366,8 +390,10 @@ impl OmniProvider {
         }
     }
 
-    /// 流式输出。OpenAI 兼容通道按 SSE 逐字回调；Gemini 通道 v1 一次性返回后
-    /// 以单次 `on_delta` 回调完整文本（与批准方案的「Gemini 回退一次性」一致）。
+    /// Streaming output. The OpenAI-compatible channel calls back per SSE
+    /// delta; the Gemini channel v1 returns in one shot and delivers the
+    /// full text via a single `on_delta` (matches the approved "Gemini
+    /// falls back to one-shot" plan).
     pub async fn complete_streaming<F, C>(
         &self,
         system_prompt: &str,
@@ -437,7 +463,7 @@ mod tests {
             .decode(data)
             .expect("valid base64");
         assert_eq!(decoded, vec![1u8, 2, 3, 4]);
-        // 空 user_text 时不追加多余 text part。
+        // No extra text part when user_text is empty.
         assert_eq!(parts.len(), 1);
     }
 
@@ -459,13 +485,106 @@ mod tests {
     }
 
     #[test]
+    fn build_messages_wraps_audio_as_data_url_for_dashscope() {
+        let mut dashscope = config();
+        dashscope.base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1".into();
+        let provider = OpenAICompatibleOmni::new(dashscope);
+        let messages = provider.build_messages("system-prompt", "", Some(&[1u8, 2, 3, 4]));
+        let parts = messages[1]["content"].as_array().expect("audio parts");
+        let data = parts[0]["input_audio"]["data"]
+            .as_str()
+            .expect("audio data");
+        let payload = data
+            .strip_prefix("data:;base64,")
+            .expect("official DashScope Omni data-url prefix");
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(payload)
+            .expect("valid base64");
+        assert_eq!(decoded, vec![1u8, 2, 3, 4]);
+    }
+
+    #[test]
+    fn build_messages_wraps_audio_as_data_url_for_bailian_dedicated_endpoint() {
+        let mut maas = config();
+        maas.base_url =
+            "https://llm-example.cn-beijing.maas.aliyuncs.com/compatible-mode/v1".into();
+        let provider = OpenAICompatibleOmni::new(maas);
+        let messages = provider.build_messages("system-prompt", "", Some(&[1u8, 2, 3, 4]));
+        let parts = messages[1]["content"].as_array().expect("audio parts");
+        assert!(parts[0]["input_audio"]["data"]
+            .as_str()
+            .expect("audio data")
+            .starts_with("data:;base64,"));
+    }
+
+    #[test]
+    fn omni_audio_data_url_matches_dashscope_hosts_only() {
+        assert!(!config().audio_requires_data_url());
+        let mut dashscope = config();
+        dashscope.base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1".into();
+        assert!(dashscope.audio_requires_data_url());
+        let mut maas = config();
+        maas.base_url = "https://LLM-EXAMPLE.cn-beijing.maas.aliyuncs.com/v1".into();
+        assert!(maas.audio_requires_data_url());
+        // Keywords outside the host (a path that happens to contain dashscope) must not trigger.
+        let mut path_only = config();
+        path_only.base_url = "https://example.com/proxy/dashscope/v1".into();
+        assert!(!path_only.audio_requires_data_url());
+        let mut empty = config();
+        empty.base_url = String::new();
+        assert!(!empty.audio_requires_data_url());
+    }
+
+    #[test]
+    fn omni_audio_data_url_ignores_non_host_url_components() {
+        for base_url in [
+            "https://dashscope@api.example.com/v1",
+            "https://user:aliyuncs@api.example.com/v1",
+            "https://api.example.com?provider=dashscope",
+            "https://api.example.com#aliyuncs",
+        ] {
+            let mut other = config();
+            other.base_url = base_url.into();
+            assert!(!other.audio_requires_data_url(), "{base_url}");
+            let provider = OpenAICompatibleOmni::new(other);
+            let messages = provider.build_messages("system", "", Some(&[1u8, 2, 3, 4]));
+            assert_eq!(messages[1]["content"][0]["input_audio"]["data"], "AQIDBA==");
+        }
+    }
+
+    #[test]
     fn omni_body_has_stream_model_and_temperature() {
         let provider = OpenAICompatibleOmni::new(config());
         let body = provider.omni_body(true, vec![json!({"role": "user", "content": "x"})]);
         assert_eq!(body["stream"], true);
         assert_eq!(body["model"], "gpt-4o-audio-preview");
-        // temperature 以 f32 存（0.3f32 序列化后是 0.30000001192092896），用容差比较。
+        // temperature is stored as f32 (0.3f32 serializes as 0.30000001192092896); compare with tolerance.
         assert!((body["temperature"].as_f64().unwrap() - 0.3).abs() < 1e-6);
+        assert!(body.get("modalities").is_none());
+    }
+
+    #[test]
+    fn omni_body_sets_text_modalities_for_dashscope() {
+        let mut dashscope = config();
+        dashscope.base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1".into();
+        let provider = OpenAICompatibleOmni::new(dashscope);
+        let body = provider.omni_body(true, vec![json!({"role": "user", "content": "x"})]);
+        assert_eq!(body["modalities"], json!(["text"]));
+    }
+
+    #[test]
+    fn omni_body_omits_temperature_for_openai_gpt6_api_ids() {
+        for model in ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"] {
+            let mut omni = config();
+            omni.model = model.into();
+            let provider = OpenAICompatibleOmni::new(omni);
+            let body = provider.omni_body(false, vec![json!({"role": "user", "content": "x"})]);
+
+            assert!(
+                body.get("temperature").is_none(),
+                "{model} must not receive temperature (issue #1101)"
+            );
+        }
     }
 
     #[test]

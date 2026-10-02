@@ -1,4 +1,5 @@
-// 快捷键设置：开始/停止、翻译、问答、切风格、风格直达、唤起 App、以及只读取消/确认提示。
+// Shortcut settings: start/stop, translation, QA, switch style, style direct access, open app,
+// plus read-only cancel/confirm hints.
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -16,6 +17,7 @@ import {
   setDictationHotkey,
   setOpenAppHotkey,
   setQaHotkey,
+  setQuickNoteHotkey,
   setStylePackHotkeys,
   setSwitchStyleHotkey,
   setTranslationHotkey,
@@ -34,7 +36,8 @@ export function ShortcutsSection() {
   const { prefs, hotkey, refresh, updatePrefs: savePrefs } = useHotkeySettings();
   const [platformCaps, setPlatformCaps] = useState<PlatformCapabilities | null>(null);
   const [stylePacks, setStylePacks] = useState<StylePack[]>([]);
-  // 新增行的草稿状态：先选风格包、再录快捷键，两者齐了才真正落库。
+  // Draft state for a new row: pick the style pack first, record the shortcut second; only once
+  // both are set does anything persist.
   const [draftOpen, setDraftOpen] = useState(false);
   const [draftPackId, setDraftPackId] = useState('');
   const [stylePackError, setStylePackError] = useState<string | null>(null);
@@ -59,7 +62,8 @@ export function ShortcutsSection() {
   }
 
   const stylePackHotkeys: StylePackHotkey[] = prefs.stylePackHotkeys ?? [];
-  // 下拉列出全部风格包（含停用的，激活时后端自动启用）；已被其它行绑定的包置灰防重复。
+  // Dropdown lists all style packs (disabled ones included; the backend re-enables on
+  // activation); packs already bound by other rows are grayed out to prevent duplicates.
   const stylePackOptions = (currentPackId: string) =>
     stylePacks.map((pack) => {
       const { name } = getStylePackPresentation(pack, t);
@@ -70,7 +74,8 @@ export function ShortcutsSection() {
           pack.id !== currentPackId && stylePackHotkeys.some((entry) => entry.packId === pack.id),
       };
     });
-  // 整表替换：失败时统一在本区域显示，并继续抛给 ShortcutRecorder 结束录制状态。
+  // Full-table replace: on failure the error shows in this section and rethrows so
+  // ShortcutRecorder exits its recording state.
   const saveStylePackHotkeys = async (next: StylePackHotkey[]) => {
     setStylePackError(null);
     try {
@@ -93,8 +98,8 @@ export function ShortcutsSection() {
 
   const readonlyRows: Array<[string, string]> = [
     [t('settings.shortcuts.cancel'), 'Esc'],
-    // 胶囊右侧「✓ 确认插入」目前只在 macOS 胶囊上有，Windows/Linux 胶囊没有这个按钮，
-    // 之前 os !== 'linux' 把它也展示给了 Windows，误导用户以为有个用不了的快捷键（issue #780）。
+    // 胶囊右侧「✓ 确认插入」只在 macOS 胶囊上有，Windows 胶囊没有这个按钮；
+    // 展示给 Windows 会误导用户（issue #780）。
     ...(os === 'mac'
       ? ([[t('settings.shortcuts.confirm'), t('settings.shortcuts.confirmHint')]] as Array<
           [string, string]
@@ -112,7 +117,8 @@ export function ShortcutsSection() {
             value={prefs.dictationHotkey}
             sideSpecificModifiers
             allowMacDictationKey={os === 'mac'}
-            // 与「录音与输入」页一致：核心热键不可停用，置灰并提示。
+            // Consistent with the "Recording & Input" page: core hotkeys cannot be disabled;
+            // gray them out with a hint.
             disableDisabled
             disableHint={t('settings.recording.comboDisableHint')}
             onSave={async (binding) => {
@@ -149,6 +155,25 @@ export function ShortcutsSection() {
             const binding = defaultQaShortcut();
             await setQaHotkey(binding);
             await savePrefs({ ...prefs, qaHotkey: binding });
+          }}
+        />
+      </SettingRow>
+      <SettingRow
+        label={t('settings.shortcuts.quickNote', 'Quick note')}
+        desc={t(
+          'settings.shortcuts.quickNoteDesc',
+          'Press once to start a permanent audio note, and again to finish it.',
+        )}
+      >
+        <ShortcutRecorder
+          value={prefs.quickNoteHotkey}
+          onSave={async (binding) => {
+            await setQuickNoteHotkey(binding);
+            await savePrefs({ ...prefs, quickNoteHotkey: binding });
+          }}
+          onDisable={async () => {
+            await setQuickNoteHotkey(null);
+            await savePrefs({ ...prefs, quickNoteHotkey: null });
           }}
         />
       </SettingRow>
