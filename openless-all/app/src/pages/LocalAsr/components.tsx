@@ -83,7 +83,7 @@ export function FoundryPrepareProgressBlock({
                 style={{
                   fontSize: 12,
                   color: 'var(--ol-ink-2)',
-                  fontWeight: 600,
+                  fontWeight: 'var(--ol-font-weight-semibold)',
                 }}
               >
                 {stage.label}
@@ -278,7 +278,7 @@ export function ModelRow({
             <div
               style={{
                 fontSize: 14,
-                fontWeight: 600,
+                fontWeight: 'var(--ol-font-weight-semibold)',
                 color: 'var(--ol-ink)',
               }}
             >

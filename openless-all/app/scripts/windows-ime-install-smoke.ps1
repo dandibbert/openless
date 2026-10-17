@@ -11,18 +11,18 @@ $ErrorActionPreference = "Stop"
 
 $TextServiceClsid = "{6B9F3F4F-5EE7-42D6-9C61-9F80B03A5D7D}"
 $ProfileGuid = "{9B5F5E04-23F6-47DA-9A26-D221F6C3F02E}"
-$LangId = "0x00000804"
-$KeyboardCategoryGuid = "{34745C63-B2F0-4784-8B67-5E12C8701A31}"
+$LangId = "0x0000ffff"
+$SpeechCategoryGuid = "{B5A73CD1-8355-426B-A161-259808F26B14}"
 $ImmersiveCategoryGuid = "{13A016DF-560B-46CD-947A-4C3AF1E0E35D}"
 $SystrayCategoryGuid = "{25504FB4-7BAB-4BC1-9C69-CF81890F0EF5}"
 
 # Keep this script aligned with the backend status check and the TSF IPC path
-# used by OpenLessImeSubmit-* named pipes.
+# used by OpenLessImeMessageWindow (WM_COPYDATA).
 $ExpectedBackendKeys = @(
   "Software\Classes\CLSID\{6B9F3F4F-5EE7-42D6-9C61-9F80B03A5D7D}\InprocServer32",
   "Software\WOW6432Node\Classes\CLSID\{6B9F3F4F-5EE7-42D6-9C61-9F80B03A5D7D}\InprocServer32",
-  "Software\Microsoft\CTF\TIP\{6B9F3F4F-5EE7-42D6-9C61-9F80B03A5D7D}\LanguageProfile\0x00000804\{9B5F5E04-23F6-47DA-9A26-D221F6C3F02E}",
-  "Software\Microsoft\CTF\TIP\{6B9F3F4F-5EE7-42D6-9C61-9F80B03A5D7D}\Category\Category\{34745C63-B2F0-4784-8B67-5E12C8701A31}\{6B9F3F4F-5EE7-42D6-9C61-9F80B03A5D7D}",
+  "Software\Microsoft\CTF\TIP\{6B9F3F4F-5EE7-42D6-9C61-9F80B03A5D7D}\LanguageProfile\0x0000ffff\{9B5F5E04-23F6-47DA-9A26-D221F6C3F02E}",
+  "Software\Microsoft\CTF\TIP\{6B9F3F4F-5EE7-42D6-9C61-9F80B03A5D7D}\Category\Category\{B5A73CD1-8355-426B-A161-259808F26B14}\{6B9F3F4F-5EE7-42D6-9C61-9F80B03A5D7D}",
   "Software\Microsoft\CTF\TIP\{6B9F3F4F-5EE7-42D6-9C61-9F80B03A5D7D}\Category\Category\{13A016DF-560B-46CD-947A-4C3AF1E0E35D}\{6B9F3F4F-5EE7-42D6-9C61-9F80B03A5D7D}",
   "Software\Microsoft\CTF\TIP\{6B9F3F4F-5EE7-42D6-9C61-9F80B03A5D7D}\Category\Category\{25504FB4-7BAB-4BC1-9C69-CF81890F0EF5}\{6B9F3F4F-5EE7-42D6-9C61-9F80B03A5D7D}"
 )
@@ -58,14 +58,18 @@ function Invoke-CheckedProcess {
     [string]$FilePath,
     [string[]]$ArgumentList = @(),
     [Parameter(Mandatory = $true)]
-    [string]$Label
+    [string]$Label,
+    [int[]]$SuccessExitCodes = @(0)
   )
 
   $commandLine = Join-ProcessArguments $ArgumentList
   Write-Host "[run] $Label`: $FilePath $commandLine"
   $process = Start-Process -FilePath $FilePath -ArgumentList $commandLine -Wait -PassThru
-  if ($process.ExitCode -ne 0) {
+  if ($process.ExitCode -notin $SuccessExitCodes) {
     throw "$Label failed with exit code $($process.ExitCode)"
+  }
+  if ($process.ExitCode -eq 3010) {
+    Write-Host "[ok] $Label succeeded; Windows requested a reboot (3010). Continuing payload/registry verification without rebooting."
   }
 }
 
@@ -153,7 +157,7 @@ function Assert-OpenLessImeInstalled {
   }
 
   Assert-RegistryKey -View Registry64 -SubKey "Software\Microsoft\CTF\TIP\$TextServiceClsid\LanguageProfile\$LangId\$ProfileGuid" -Label "TSF language profile"
-  Assert-RegistryKey -View Registry64 -SubKey "Software\Microsoft\CTF\TIP\$TextServiceClsid\Category\Category\$KeyboardCategoryGuid\$TextServiceClsid" -Label "TSF keyboard category"
+  Assert-RegistryKey -View Registry64 -SubKey "Software\Microsoft\CTF\TIP\$TextServiceClsid\Category\Category\$SpeechCategoryGuid\$TextServiceClsid" -Label "TSF speech category"
   Assert-RegistryKey -View Registry64 -SubKey "Software\Microsoft\CTF\TIP\$TextServiceClsid\Category\Category\$ImmersiveCategoryGuid\$TextServiceClsid" -Label "TSF immersive category"
   Assert-RegistryKey -View Registry64 -SubKey "Software\Microsoft\CTF\TIP\$TextServiceClsid\Category\Category\$SystrayCategoryGuid\$TextServiceClsid" -Label "TSF systray category"
 
@@ -178,7 +182,7 @@ function Uninstall-OpenLess {
     }
     Invoke-CheckedProcess -FilePath $uninstaller -ArgumentList @("/S") -Label "NSIS uninstall"
   } else {
-    Invoke-CheckedProcess -FilePath "msiexec.exe" -ArgumentList @("/x", $InstallerPath, "/qn", "/norestart") -Label "MSI uninstall"
+    Invoke-CheckedProcess -FilePath "msiexec.exe" -ArgumentList @("/x", $InstallerPath, "/qn", "/norestart") -Label "MSI uninstall" -SuccessExitCodes @(0, 3010)
   }
 }
 
@@ -190,7 +194,7 @@ $InstallerPath = (Resolve-Path -LiteralPath $InstallerPath).Path
 if ($InstallerKind -eq "nsis") {
   Invoke-CheckedProcess -FilePath $InstallerPath -ArgumentList @("/S", "/AllUsers") -Label "NSIS install"
 } else {
-  Invoke-CheckedProcess -FilePath "msiexec.exe" -ArgumentList @("/i", $InstallerPath, "/qn", "/norestart") -Label "MSI install"
+  Invoke-CheckedProcess -FilePath "msiexec.exe" -ArgumentList @("/i", $InstallerPath, "/qn", "/norestart") -Label "MSI install" -SuccessExitCodes @(0, 3010)
 }
 
 $installRoot = Assert-OpenLessImeInstalled
