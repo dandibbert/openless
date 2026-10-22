@@ -511,7 +511,7 @@ async fn send_text(writer: &SharedWriter, text: String) -> Result<(), SonioxASRE
             "websocket writer not available".to_string(),
         ));
     };
-    ws.send(Message::Text(text))
+    ws.send(Message::Text(text.into()))
         .await
         .map_err(|e| SonioxASRError::SendFailed(e.to_string()))
 }
@@ -523,7 +523,7 @@ async fn send_binary(writer: &SharedWriter, data: Vec<u8>) -> Result<(), SonioxA
             "websocket writer not available".to_string(),
         ));
     };
-    ws.send(Message::Binary(data))
+    ws.send(Message::Binary(data.into()))
         .await
         .map_err(|e| SonioxASRError::SendFailed(e.to_string()))
 }
