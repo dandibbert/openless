@@ -1,9 +1,11 @@
+import { siwcDe as siwc } from './siwc';
 import type { zhCN } from './zh-CN';
 
 import { uiRefinementEn as uiRefinement } from './uiRefinement';
 import { experimentalAsrEn as experimentalAsr } from './experimentalAsr';
 
 export const de: typeof zhCN = {
+  siwc,
   experimentalAsr,
   uiRefinement,
   voiceEdit: {
@@ -1358,6 +1360,17 @@ export const de: typeof zhCN = {
       cursorContextDesc:
         'Einen kurzen Textabschnitt rund um den Cursor als Referenz für Eigennamen, Homophone und Bezüge mit der Überarbeitung an das Modell senden (macOS / Windows / Android). Diktat, Schnellnotizen und Cloud-Notizen nutzen ihn, der Kontext selbst wird aber nie in Notizen, Verlauf oder Protokolle geschrieben; bei einem Cloud-Modell wird er mit der Überarbeitungsanfrage an diesen Anbieter gesendet. Diese Einstellung ist vom lokalen Lernen getrennt. Passwortfelder, Terminals und bekannte sensible Apps sind ausgeschlossen.',
     },
+    localMigration: {
+      title: 'Lokale Konfigurationsmigration',
+      description:
+        'Exportiere alle portablen lokalen Einstellungen in ein versioniertes Paket oder stelle sie auf einem anderen Android-Gerät wieder her. Der Freigabemodus ist standardmäßig anonymisiert; persönliche Migration darf Anmeldedaten nur passwortgeschützt enthalten. Der native Ablauf zeigt Quelle, Version, Kategorien und Änderungen vor dem Zusammenführen oder Ersetzen.',
+      safetyNote:
+        'Systemberechtigungen, OAuth-Sitzungen, Gerätepfade und Laufzeitstatus werden nie migriert. Vor dem Import wird eine lokale Sicherung erstellt.',
+      open: 'Lokale Migration öffnen',
+      opening: 'Wird geöffnet…',
+      openFailed:
+        'Die lokale Migration konnte nicht geöffnet werden. Versuche es erneut über die Einstellungen.',
+    },
     codingConsole: {
       title: 'Claude-Konsole',
       desc: 'Prüft den lokalen Status von Claude Code und MCP (Computersteuerung). Führt Claude unter festgelegten Einschränkungen ohne eigene Oberfläche aus und zeigt Ausgabe und Kosten laufend an.',
@@ -1521,6 +1534,16 @@ export const de: typeof zhCN = {
       capsuleTranscriptDesc:
         'Erkannten Originaltext statt Audiobalken anzeigen. Ohne Streaming erscheint der Text nach der Erkennung. Deaktivieren stellt die bisherige Anzeige wieder her.',
       capsuleTranscriptFontSize: 'Transkript-Schriftgröße',
+      capsuleDisplayModeLabel: 'Kapsel auf mehreren Bildschirmen',
+      capsuleDisplayModeDesc:
+        'Wähle die Bildschirme für die Aufnahmekapsel. Alle Bildschirme benötigen zusätzliche Fenster und Grafikressourcen.',
+      capsuleDisplayCursorScreen: 'Bildschirm unter dem Mauszeiger',
+      capsuleDisplayPrimaryScreen: 'Nur Hauptbildschirm',
+      capsuleDisplayForegroundWindowScreen: 'Bildschirm des Vordergrundfensters',
+      capsuleDisplayAllScreens: 'Auf allen Bildschirmen anzeigen',
+      capsuleDisplayModeRestartTitle: 'OpenLess neu starten, um den Anzeigemodus anzuwenden',
+      capsuleDisplayModeRestartDesc:
+        'Der Wechsel vom Modus für alle Bildschirme erfordert einen Neustart, um die bisherigen Kapselfenster zu schließen. Jetzt neu starten?',
       capsuleStyleLabel: 'Kapselstil',
       capsuleStyleSiri: 'Schimmernder Siri-Stil',
       capsuleStyleClassic: 'OpenLess-Standardstil',
@@ -1530,9 +1553,37 @@ export const de: typeof zhCN = {
       lowLatencyDictationLabel: 'Aufnahme mit niedriger Latenz',
       lowLatencyDictationDesc:
         'Hält einen Mikrofonstream bereit und bewahrt bis zu 500 ms im Speicher, damit Sprache direkt nach dem Kurzbefehl seltener verloren geht. Vor der Bestätigung wird Audio weder gespeichert noch hochgeladen; der Stromverbrauch steigt und die Mikrofonanzeige bleibt aktiv.',
-      audioEnhancementLabel: 'Leichte Mikrofonverbesserung',
+      dsp: {
+        noise: 'Noise reduction',
+        dereverb: 'Comb filter',
+        equalizer: 'Equalizer',
+        gain: 'Input gain',
+        agc: 'Automatic gain',
+        vad: 'Speech gate',
+        title: 'Speech enhancement settings',
+        description:
+          'RNNoise is lightweight; PureVox offers model-based noise reduction with higher CPU use. Changes apply to the next recording.',
+        off: 'Off',
+        spectral: 'Spectral subtraction',
+        strength: 'Noise reduction strength',
+        target: 'Target level',
+        attack: 'Attack speed',
+        decay: 'Release speed',
+        vadHint:
+          'Attenuates quiet passages; it does not stop recording. A high threshold can remove quiet speech.',
+        threshold: 'Speech gate threshold',
+        tone: 'Tone and room adjustments',
+        combHint:
+          'The comb filter follows MicYou’s simple delay subtraction. It can color speech; start at 0%.',
+        preamp: 'Equalizer preamp',
+        order: 'Processing order',
+        up: 'Move up',
+        down: 'Move down',
+        reset: 'Reset enhancement settings',
+      },
+      audioEnhancementLabel: 'Sprachverbesserung',
       audioEnhancementDesc:
-        'Wendet eine leichte Verstärkung, weiche Begrenzung und konservative Rauschunterdrückung auf das lokale Mikrofon an. Keine Echounterdrückung. Standardmäßig aus.',
+        'RNNoise- oder PureVox-Rauschunterdrückung, automatische Verstärkung und Begrenzung. Standardmäßig aus; Änderungen gelten ab der nächsten Aufnahme.',
       muteDuringRecordingLabel: 'Während der Aufnahme stummschalten',
       muteDuringRecordingDesc:
         'Schaltet die Systemausgabe während der Spracheingabe vorübergehend stumm, um Lautsprecherechos zu vermeiden.',
@@ -1550,6 +1601,9 @@ export const de: typeof zhCN = {
       pasteShortcutCtrlV: 'Ctrl+V (Standard / die meisten Apps)',
       pasteShortcutCtrlShiftV: 'Ctrl+Shift+V (kitty / alacritty / wezterm / die meisten Terminals)',
       pasteShortcutShiftInsert: 'Shift+Insert (xterm / urxvt)',
+      plainTextInsertionLabel: 'Reintext-Einfügemodus',
+      plainTextInsertionDesc:
+        'Wenn aktiviert, verwendet das simulierte Einfügen Umschalt+Einfg statt Strg+V (der obige Kurzbefehl ist dabei gesperrt). Nur in sehr besonderen Fällen aktivieren, z. B. wenn ein Tastaturlayout-Umschalter wie Punto Switcher Strg+V abfängt. Gilt nur für die Einfügemethode über die Zwischenablage (nur Windows).',
       comboRecordLabel: 'Kurzbefehl aufzeichnen',
       comboRecordDesc:
         'Klicke hier und drücke die gewünschte Tastenkombination (z. B. ⌘⇧D). Unterstützt die Modi „Umschalten“ und „Gedrückt halten“.',
@@ -1611,7 +1665,31 @@ export const de: typeof zhCN = {
         'Speichert das rohe Mikrofonaudio als WAV, um Erkennungsprobleme zu untersuchen.',
       audioRecordingMaxEntriesLabel: 'Maximale Rohaufnahmen',
       audioRecordingMaxEntriesDesc: 'Maximale Anzahl lokal gespeicherter WAV-Dateien. Leer = 200.',
+      voiceActivationLabel: 'Sprachaktivierung',
+      voiceActivationDesc: 'Lokal auf eine Aktivierungsphrase warten, um das Diktat zu starten.',
+      voiceActivationLocalOnly:
+        'Die Erkennung bleibt auf diesem Gerät; Bereitschaftsaudio wird weder hochgeladen noch archiviert.',
+      voiceActivationMultimodalModels:
+        'Hier das Sprachaktivierungsmodell vorbereiten. Das Diktat nutzt weiterhin den aktuellen multimodalen Dienst.',
+      voiceActivationModelMissing: 'Das lokale Zipformer-Modell ist nicht installiert.',
+      voiceActivationDownloadZipformer: 'Zipformer herunterladen',
+      voiceActivationWakeEnabled: 'Aktivierungsphrase',
+      voiceActivationWakePhrase: 'Aktivierungsphrase',
+      voiceActivationFinishEnabled: 'Abschlussphrase',
+      voiceActivationFinishPhrase: 'Abschlussphrase',
+      voiceActivationTimeoutEnabled: 'Nach Zeitüberschreitung stoppen',
+      voiceActivationTimeoutSeconds: 'Zeitüberschreitung (Sekunden)',
       startupGroupTitle: 'Startverhalten',
+      lowMemoryBackgroundLabel: 'Speichersparender Hintergrundmodus',
+      lowMemoryBackgroundDesc:
+        'Nach einem Neustart: Hauptfenster beim Schließen freigeben, native Kapsel bei Bedarf anzeigen und Mikrofonvorwärmung im Leerlauf deaktivieren. Die Freigabeeinstellungen lokaler Modelle bleiben erhalten.',
+      lowMemoryRestartLabel: 'Wird nach Neustart wirksam',
+      lowMemoryRestartDesc:
+        'Der Schalter für den speichersparenden Hintergrundmodus ist gespeichert; der aktive Modus wechselt erst nach einem Neustart der App.',
+      lowMemoryRestartNow: 'Jetzt neu starten',
+      lowMemoryCapsuleErrorLabel: 'Native Kapsel nicht verfügbar',
+      lowMemoryCapsuleErrorDesc:
+        'Diktieren funktioniert weiterhin, aber die schwebende Kapsel wird nicht angezeigt. Das Hilfsprogramm fehlt möglicherweise oder wird blockiert; installiere die App neu.',
       startMinimizedLabel: 'Minimiert starten (ohne Hauptfenster)',
       startMinimizedDesc:
         'Zeigt bei keinem Startweg das Hauptfenster an. Nur Menüleiste / Infobereich.',
@@ -1740,6 +1818,7 @@ export const de: typeof zhCN = {
         openai: 'OpenAI',
         gemini: 'Google Gemini',
         codexOAuth: 'Codex OAuth',
+        chatgptSiwc: 'ChatGPT Plan',
         mimo: 'Xiaomi MiMo',
         cometapi: 'CometAPI',
         openrouterFree: 'OpenRouter (kostenlose Modelle)',
@@ -1785,9 +1864,9 @@ export const de: typeof zhCN = {
         omniDashscope: 'Alibaba DashScope Omni',
       },
       geminiTranscribeNotice:
-        'gemini-3.5-transcribe transkribiert hier wortgetreu; danach verarbeitet das konfigurierte LLM den Text. Für Smart-Transkription wähle dieses Modell im multimodalen Modus. Audio wird nach Aufnahmeende hochgeladen; Live-Transkription wird nicht unterstützt. Basis-URL: https://generativelanguage.googleapis.com/v1beta (auch /v1beta/interactions möglich).',
+        'Beide Modelle transkribieren hier wortgetreu, auf Wunsch mit anschließender Verarbeitung durch das konfigurierte LLM. gemini-3.5-transcribe lädt Audio nach Aufnahmeende hoch. gemini-3.5-transcribe-live zeigt Ergebnisse während des Sprechens; jede Aufnahme darf bis zu 10 Minuten dauern. Für Smart-Transkription verwende den multimodalen Modus. Basis-URL: https://generativelanguage.googleapis.com/v1beta.',
       geminiTranscribeOmniNotice:
-        'gemini-3.5-transcribe bietet Smart-Transkription: Füllwörter entfernen, gesprochene Korrekturen übernehmen und den Text nach Aufnahmeende formatieren. Arbeitssprachen und Wörterbucheinträge werden unterstützt. Stil-Prompts, Übersetzung, reine Textüberarbeitung und Fragen werden nicht unterstützt; verwende dafür den traditionellen Modus mit einem LLM.',
+        'gemini-3.5-transcribe und gemini-3.5-transcribe-live unterstützen Smart-Transkription. Live zeigt während des Sprechens einen Entwurf; jede Aufnahme darf bis zu 10 Minuten dauern. Nach Aufnahmeende entfernt Smart Füllwörter, übernimmt gesprochene Korrekturen und formatiert den endgültigen Text. Beide Modelle unterstützen Arbeitssprachen und Wörterbucheinträge, aber keine Stil-Prompts, Übersetzung, Textüberarbeitung oder Fragen und Antworten. Verwende dafür den traditionellen Modus mit einem LLM.',
       validateSuccessAudio:
         'Audio-Verbindung mit einer kurzen Stilleprobe geprüft. Bestätige die Transkriptionsqualität mit einer kurzen Aufnahme.',
       elevenLabsUploadNotice:
@@ -2151,6 +2230,7 @@ export const de: typeof zhCN = {
         background: 'Wenn die App im Hintergrund ist',
         keyboard: 'Wenn die Tastatur erscheint',
         always: 'Immer sichtbar',
+        never: 'Nie anzeigen',
       },
       androidOverlayTriggerHint: {
         background:
@@ -2158,6 +2238,7 @@ export const de: typeof zhCN = {
         keyboard:
           'Dieser Modus wird nicht weitergeführt. Bestehende Einstellungen werden auf „Im Hintergrund“ zurückgesetzt.',
         always: 'Jederzeit verfügbar, aber dauerhaft auf dem Bildschirm.',
+        never: 'Wird nie automatisch angezeigt; die Tastatur bleibt nutzbar.',
       },
       androidOverlayTriggerDisabled: {
         keyboard:
@@ -2243,6 +2324,9 @@ export const de: typeof zhCN = {
         'SendInput gibt Unicode direkt ein und umgeht TSF / IME. Ein Wechsel der Eingabemethode ist nicht erforderlich.',
       streamingInsertHintLinux:
         'Verwendet das fcitx5-Plugin zur Textübermittlung. Laufendes Einfügen simuliert Tasten über enigo + XTest.',
+      windowsCompositionInputLabel: 'Live-Transkript im Eingabefeld anzeigen (Windows)',
+      windowsCompositionInputDesc:
+        'Während du sprichst, erscheint der erkannte Text unterstrichen im Eingabefeld und wird beim Beenden durch das Endergebnis ersetzt. Erfordert die OpenLess-TSF-Eingabekomponente und eine App mit Unterstützung für TSF.',
       streamingInsertSaveClipboardLabel: 'In Zwischenablage kopieren',
       streamingInsertSaveClipboardHint:
         'Kopiert nach erfolgreichem Einfügen den fertigen Text in die Zwischenablage, damit du ihn mit Cmd+V erneut einfügen kannst. Bei „Aus“ bleibt die Zwischenablage unberührt.',
@@ -2251,6 +2335,9 @@ export const de: typeof zhCN = {
         'Verlagert die Transkription von Cloud-ASR auf das Gerät. Für Offline-Nutzung oder sensible Daten.',
       localAsrWarningShort:
         'Lokale Inferenz ist langsamer. Zu schwache Hardware kann Wörter verlieren.',
+      localAsrFallbackLabel: 'Bei Cloud-Fehler lokales Modell verwenden',
+      localAsrFallbackDesc:
+        'Bei schwacher oder fehlender Verbindung wird die Aufnahme mit dem heruntergeladenen lokalen Modell erkannt, statt auf Cloud-Wiederholungen zu warten. Erfordert ein heruntergeladenes lokales Modell.',
       qwen3Desc: 'Nach der Aktivierung übernimmt dieses Modell die Spracherkennung.',
       sherpaDesc: 'Nach der Aktivierung übernimmt dieses Modell die Spracherkennung.',
       foundryDesc: 'Nach der Aktivierung übernimmt dieses Modell die Spracherkennung.',

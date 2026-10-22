@@ -22,6 +22,7 @@ import { MarketplaceSection } from './MarketplaceSection';
 import { PermissionsSection } from './PermissionsSection';
 import { DataStorageSection } from './DataStorageSection';
 import { CloudSyncSection, CustomSyncServerSection } from './CloudSyncSection';
+import { LocalMigrationSection } from './LocalMigrationSection';
 import { LocalModelsSection } from './models/LocalModelsSection';
 import { LocalModelsNavContext } from './models/modelsNav';
 import { DebugToolsSection } from './DebugToolsSection';
@@ -35,6 +36,7 @@ import { AboutSection } from './AboutSection';
 import { getPlatformCapabilities, getCachedPlatformCapabilities } from '../../lib/platform';
 import { listChannels } from '../../lib/ipc';
 import type { PlatformCapabilities } from '../../lib/types';
+import { type OS } from '../../components/WindowChrome';
 import { useHotkeySettings } from '../../state/HotkeySettingsContext';
 import { emitSaved } from '../../lib/savedEvent';
 import { SettingRow, Toggle, ExperimentalSectionTitle, segmentedTrackStyle } from './shared';
@@ -62,13 +64,16 @@ function usePlatformCaps(): PlatformCapabilities | null {
 }
 
 // Recording & input: from recording to text insertion, plus phone input.
-export function GeneralTab() {
+export function GeneralTab({
+  os,
+  onOpenLocalModels,
+}: { os?: OS; onOpenLocalModels?: () => void } = {}) {
   const platformCaps = usePlatformCaps();
   const showRemoteInput = platformCaps?.platform === 'desktop';
 
   return (
     <>
-      <RecordingInputSection />
+      <RecordingInputSection forcedOs={os} onOpenLocalModels={onOpenLocalModels} />
       <SelectionWorkspaceSection showShortcut={false} />
       {showRemoteInput && <RemoteInputSection />}
     </>
@@ -116,19 +121,31 @@ export function AppearanceTab() {
 }
 
 // AI services & models: organizes channels, local models, and network settings by current pipeline and platform capabilities.
-export function ServicesTab({ asrNavigation = 0 }: { asrNavigation?: number } = {}) {
+export function ServicesTab({
+  asrNavigation = 0,
+  initialView,
+}: { asrNavigation?: number; initialView?: ServiceViewId } = {}) {
   const { t } = useTranslation();
   const { prefs, updatePrefs } = useHotkeySettings();
   const platformCaps = usePlatformCaps();
   const showLocalModel = detectOS() !== 'mac' && platformCaps?.supportsLocalAsr === true;
   const multimodal =
     prefs?.multimodalPipelineEnabled === true && prefs.pipelineMode === 'multimodal';
-  const [view, setView] = useState<ServiceViewId>(asrNavigation ? 'asr' : 'llm');
+  const [view, setView] = useState<ServiceViewId>(initialView ?? (asrNavigation ? 'asr' : 'llm'));
   useEffect(() => {
-    if (asrNavigation) setView('asr');
-  }, [asrNavigation]);
+    if (initialView) setView(initialView);
+    else if (asrNavigation) setView('asr');
+  }, [initialView, asrNavigation]);
+  const voiceActivationModels =
+    showLocalModel && detectOS() === 'win' && prefs?.voiceActivationEnabled === true;
   const views = availableServiceViews(showLocalModel, detectOS());
-  const requestedView = resolveServiceView(view, views, multimodal, detectOS());
+  const requestedView = resolveServiceView(
+    view,
+    views,
+    multimodal,
+    detectOS(),
+    voiceActivationModels,
+  );
   const contentRef = useRef<HTMLDivElement>(null);
   const selectedView = usePageTransition(requestedView, contentRef, false);
   const pipelineRef = useRef<HTMLDivElement>(null);
@@ -259,7 +276,12 @@ export function ServicesTab({ asrNavigation = 0 }: { asrNavigation?: number } = 
                 </Tooltip>
               );
             }
-            const inactive = isServiceViewInactive(id, multimodal, detectOS());
+            const inactive = isServiceViewInactive(
+              id,
+              multimodal,
+              detectOS(),
+              voiceActivationModels,
+            );
             const required = !inactive && (id === 'llm' || id === 'asr');
             const configured =
               id === 'llm' ? requiredConfigured.llm : id === 'asr' ? requiredConfigured.asr : false;
@@ -313,12 +335,25 @@ export function ServicesTab({ asrNavigation = 0 }: { asrNavigation?: number } = 
         <div key={selectedView} ref={contentRef} className="ol-service-content">
           {/* The LocalModelPicker inside the channel editor jumps to this view through this context. */}
           <LocalModelsNavContext.Provider
-            value={showLocalModel && !multimodal ? () => setView('models') : null}
+            value={
+              showLocalModel && (!multimodal || voiceActivationModels)
+                ? () => setView('models')
+                : null
+            }
           >
             {selectedView === 'llm' && <ProvidersSection kind="llm" />}
             {selectedView === 'asr' && <ProvidersSection kind="asr" />}
             {selectedView === 'omni' && <OmniChannelSection />}
-            {showLocalModel && selectedView === 'models' && <LocalModelsSection />}
+            {showLocalModel && selectedView === 'models' && (
+              <>
+                {multimodal && voiceActivationModels && (
+                  <p className="ol-service-pipeline-hint">
+                    {t('settings.recording.voiceActivationMultimodalModels')}
+                  </p>
+                )}
+                <LocalModelsSection />
+              </>
+            )}
             {selectedView === 'connections' && (
               <>
                 <NetworkSection />
@@ -372,6 +407,7 @@ export function PrivacyTab() {
       </div>
       <PermissionsSection />
       <DataStorageSection />
+      <LocalMigrationSection />
       <CloudSyncSection />
     </>
   );

@@ -31,6 +31,7 @@ import {
   visibleAdvancedPages,
   isTestingFeaturePage,
   type AdvancedPageId,
+  type ServiceViewId,
   type SettingsSectionId,
 } from '../pages/settings/navigation';
 import { ChannelEditorHostContext } from '../pages/settings/ChannelEditorHostContext';
@@ -74,6 +75,7 @@ export function SettingsModal({
     initialSettingsSection ?? 'general',
   );
   const [requestedAdvancedPage, setAdvancedPage] = useState<AdvancedPageId | null>(null);
+  const [requestedServiceView, setRequestedServiceView] = useState<ServiceViewId | undefined>();
   const [query, setQuery] = useState('');
   const [platformCaps, setPlatformCaps] = useState(getCachedPlatformCapabilities);
   const experimentalAsr = useExperimentalAsr(platformCaps?.platform === 'desktop' && os === 'mac');
@@ -238,15 +240,22 @@ export function SettingsModal({
     });
   };
 
-  const selectSection = (next: SettingsSectionId, fromSearch = false) => {
+  const selectSection = (
+    next: SettingsSectionId,
+    fromSearch = false,
+    serviceView?: ServiceViewId,
+  ) => {
     void providerForm.finish(() => {
       channelCloseRef.current?.();
       setSection(next);
+      setRequestedServiceView(next === 'services' ? serviceView : undefined);
       setAdvancedPage(null);
       setQuery('');
       if (fromSearch) window.requestAnimationFrame(() => headingRef.current?.focus());
     });
   };
+
+  const openLocalModels = () => selectSection('services', false, 'models');
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     // Nested selectors and shortcut recorders own their keys before the dialog does.
@@ -744,11 +753,16 @@ export function SettingsModal({
                         gap: 16,
                       }}
                     >
-                      {section === 'general' && <GeneralTab />}
+                      {section === 'general' && <GeneralTab os={os} onOpenLocalModels={openLocalModels} />}
                       {section === 'inputMethod' && <InputMethodTab />}
                       {section === 'shortcuts' && <ShortcutsTab />}
                       {section === 'appearance' && <AppearanceTab />}
-                      {section === 'services' && <ServicesTab asrNavigation={asrNavigation} />}
+                      {section === 'services' && (
+                        <ServicesTab
+                          asrNavigation={asrNavigation}
+                          initialView={requestedServiceView}
+                        />
+                      )}
                       {section === 'privacy' && <PrivacyTab />}
                       {section === 'advanced' && (
                         <AdvancedTab

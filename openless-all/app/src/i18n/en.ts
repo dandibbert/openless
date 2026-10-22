@@ -1,3 +1,4 @@
+import { siwcEn as siwc } from './siwc';
 // English resources — translated from zh-CN.ts. Keep keys in sync.
 
 import type { zhCN } from './zh-CN';
@@ -7,6 +8,7 @@ import { uiRefinementEn as uiRefinement } from './uiRefinement';
 import { experimentalAsrEn as experimentalAsr } from './experimentalAsr';
 
 export const en: typeof zhCN = {
+  siwc,
   experimentalAsr,
   uiRefinement,
   voiceEdit: {
@@ -1334,6 +1336,16 @@ export const en: typeof zhCN = {
       cursorContextDesc:
         'Send a short stretch of text around the cursor with polish requests as reference for names, homophones and pronouns (macOS / Windows / Android). Dictation, quick notes and cloud notes all use it, but the context itself is never written to notes, history or logs; with a cloud model it is sent to that provider with the polish request. This switch is separate from local vocabulary learning. Password fields, terminals and known sensitive apps are excluded.',
     },
+    localMigration: {
+      title: 'Local configuration migration',
+      description:
+        'Export all portable local configuration to a versioned bundle, or restore it on another Android device. Share mode is redacted by default; personal migration can carry credentials only with password protection. The native flow previews the source, version, categories, and changes before Merge or Replace.',
+      safetyNote:
+        'System permissions, OAuth sessions, device paths, and runtime state never migrate. A local backup is created before import.',
+      open: 'Open local migration',
+      opening: 'Opening…',
+      openFailed: 'Could not open the local migration flow. Try again from Settings.',
+    },
     codingConsole: {
       title: 'Claude Console',
       desc: 'Detect your local Claude Code and MCP (computer use) status, then run Claude headlessly behind guardrails and watch the streamed output and cost.',
@@ -1492,6 +1504,16 @@ export const en: typeof zhCN = {
       capsuleTranscriptDesc:
         'Show recognized speech in the capsule instead of audio bars. Turn off to restore the original display. Non-streaming recognition appears when results arrive.',
       capsuleTranscriptFontSize: 'Transcript font size',
+      capsuleDisplayModeLabel: 'Multi-display capsule',
+      capsuleDisplayModeDesc:
+        'Choose where the recording capsule appears. Showing it on all displays uses additional windows and graphics resources.',
+      capsuleDisplayCursorScreen: 'Display under the pointer',
+      capsuleDisplayPrimaryScreen: 'Primary display only',
+      capsuleDisplayForegroundWindowScreen: 'Display under the foreground window',
+      capsuleDisplayAllScreens: 'Show on all displays',
+      capsuleDisplayModeRestartTitle: 'Restart OpenLess to apply display mode',
+      capsuleDisplayModeRestartDesc:
+        'Switching from all-screen display requires a restart to clear the previous capsule windows. Restart now?',
       capsuleStyleLabel: 'Capsule style',
       capsuleStyleSiri: 'Shimmer Siri style',
       capsuleStyleClassic: 'OpenLess default style',
@@ -1501,9 +1523,37 @@ export const en: typeof zhCN = {
       lowLatencyDictationLabel: 'Low-latency capture',
       lowLatencyDictationDesc:
         'Keep a microphone stream ready and retain up to 500 ms in memory so speech immediately after the hotkey is less likely to be missed. Audio is not saved or uploaded until you confirm recording; this uses more power and keeps the microphone indicator active.',
-      audioEnhancementLabel: 'Lightweight microphone enhancement',
+      dsp: {
+        noise: 'Noise reduction',
+        dereverb: 'Comb filter',
+        equalizer: 'Equalizer',
+        gain: 'Input gain',
+        agc: 'Automatic gain',
+        vad: 'Speech gate',
+        title: 'Speech enhancement settings',
+        description:
+          'RNNoise is lightweight; PureVox offers model-based noise reduction with higher CPU use. Changes apply to the next recording.',
+        off: 'Off',
+        spectral: 'Spectral subtraction',
+        strength: 'Noise reduction strength',
+        target: 'Target level',
+        attack: 'Attack speed',
+        decay: 'Release speed',
+        vadHint:
+          'Attenuates quiet passages; it does not stop recording. A high threshold can remove quiet speech.',
+        threshold: 'Speech gate threshold',
+        tone: 'Tone and room adjustments',
+        combHint:
+          'The comb filter follows MicYou’s simple delay subtraction. It can color speech; start at 0%.',
+        preamp: 'Equalizer preamp',
+        order: 'Processing order',
+        up: 'Move up',
+        down: 'Move down',
+        reset: 'Reset enhancement settings',
+      },
+      audioEnhancementLabel: 'Speech enhancement',
       audioEnhancementDesc:
-        'Applies light gain, soft limiting, and conservative noise suppression to the local microphone. It does not include echo cancellation. Off by default.',
+        'Apply RNNoise or PureVox noise reduction, automatic gain and limiting. Off by default; changes apply to the next recording.',
       muteDuringRecordingLabel: 'Mute while recording',
       muteDuringRecordingDesc:
         'Temporarily mute system output during voice input to avoid speaker echo.',
@@ -1521,6 +1571,9 @@ export const en: typeof zhCN = {
       pasteShortcutCtrlV: 'Ctrl+V (default / most apps)',
       pasteShortcutCtrlShiftV: 'Ctrl+Shift+V (kitty / alacritty / wezterm / most terminals)',
       pasteShortcutShiftInsert: 'Shift+Insert (xterm / urxvt)',
+      plainTextInsertionLabel: 'Plain-text insertion mode',
+      plainTextInsertionDesc:
+        'When on, the simulated paste uses Shift+Insert instead of Ctrl+V (the shortcut above is locked while on). Only enable this in very special cases, e.g. when a keyboard layout switcher such as Punto Switcher swallows Ctrl+V. Applies to clipboard paste insertion only (Windows).',
       comboRecordLabel: 'Record shortcut',
       comboRecordDesc:
         'Click, then press your desired key combination (e.g. \u2318\u21E7D). Supports Toggle and Push-to-talk modes.',
@@ -1580,7 +1633,31 @@ export const en: typeof zhCN = {
         'Save raw microphone audio as wav for diagnosing recognition issues.',
       audioRecordingMaxEntriesLabel: 'Max raw recordings',
       audioRecordingMaxEntriesDesc: 'Max wav files retained locally. Blank = 200.',
+      voiceActivationLabel: 'Voice activation',
+      voiceActivationDesc: 'Listen locally for a wake phrase to start dictation.',
+      voiceActivationLocalOnly:
+        'Recognition stays on this device; standby audio is not uploaded or archived.',
+      voiceActivationMultimodalModels:
+        'Prepare the voice activation model here. Dictation still uses your current multimodal service.',
+      voiceActivationModelMissing: 'The local Zipformer model is not installed.',
+      voiceActivationDownloadZipformer: 'Download Zipformer',
+      voiceActivationWakeEnabled: 'Wake phrase',
+      voiceActivationWakePhrase: 'Wake phrase',
+      voiceActivationFinishEnabled: 'Finish phrase',
+      voiceActivationFinishPhrase: 'Finish phrase',
+      voiceActivationTimeoutEnabled: 'Stop after timeout',
+      voiceActivationTimeoutSeconds: 'Timeout (seconds)',
       startupGroupTitle: 'Startup',
+      lowMemoryBackgroundLabel: 'Low-memory background mode',
+      lowMemoryBackgroundDesc:
+        'Applies after restart. Release the main window on close and show a native capsule on demand. Disable microphone prewarming while idle. Local models keep their existing release settings.',
+      lowMemoryRestartLabel: 'Applies after restart',
+      lowMemoryRestartDesc:
+        'The low-memory background switch is saved; the running mode changes after the app restarts.',
+      lowMemoryRestartNow: 'Restart now',
+      lowMemoryCapsuleErrorLabel: 'Native capsule unavailable',
+      lowMemoryCapsuleErrorDesc:
+        'Dictation still works, but the floating capsule will not appear. The helper may be missing or blocked; reinstall the app.',
       startMinimizedLabel: 'Start minimized (no main window)',
       startMinimizedDesc: 'No main window on any launch path — menu bar / tray only.',
       autoUpdateCheckLabel: 'Auto-check for updates',
@@ -1696,6 +1773,7 @@ export const en: typeof zhCN = {
         openai: 'OpenAI',
         gemini: 'Google Gemini',
         codexOAuth: 'Codex OAuth',
+        chatgptSiwc: 'ChatGPT Plan',
         mimo: 'Xiaomi MiMo',
         cometapi: 'CometAPI',
         openrouterFree: 'OpenRouter (free models)',
@@ -1747,9 +1825,9 @@ export const en: typeof zhCN = {
         omniDashscope: 'Alibaba DashScope Omni',
       },
       geminiTranscribeNotice:
-        'gemini-3.5-transcribe uses verbatim transcription here, followed by your configured LLM. For built-in Smart transcription, select this model in Multimodal mode. Audio is uploaded after recording stops; live transcription is not supported. Base URL: https://generativelanguage.googleapis.com/v1beta (also accepts /v1beta/interactions).',
+        'Both models return verbatim text here, with optional processing by your configured LLM. gemini-3.5-transcribe uploads audio after recording stops. gemini-3.5-transcribe-live shows results while you speak, for up to 10 minutes per recording. For Smart transcription, use Multimodal mode. Base URL: https://generativelanguage.googleapis.com/v1beta.',
       geminiTranscribeOmniNotice:
-        'Use gemini-3.5-transcribe for Smart transcription: removes fillers, applies spoken corrections and formats the transcript after recording stops. Working languages and dictionary terms are supported. This model does not use style prompts or support translation, text polishing or Q&A; use Traditional mode with an LLM for those tasks.',
+        'Use gemini-3.5-transcribe or gemini-3.5-transcribe-live for Smart transcription. Live shows a draft while you speak, for up to 10 minutes per recording. Smart removes fillers, applies spoken corrections and formats the final transcript after recording stops. Both models support working languages and dictionary terms, but not style prompts, translation, text polishing or Q&A; use Traditional mode with an LLM for those tasks.',
       validateSuccessAudio:
         'Audio connectivity passed using a short silence sample. Confirm transcription quality with a short recording.',
       elevenLabsUploadNotice:
@@ -2099,11 +2177,13 @@ export const en: typeof zhCN = {
         background: 'When app is backgrounded',
         keyboard: 'When keyboard appears',
         always: 'Always visible',
+        never: 'Never show',
       },
       androidOverlayTriggerHint: {
         background: 'Simple and battery-friendly; no overlay while typing in other apps.',
         keyboard: 'This mode is shelved. Existing settings are moved back to background.',
         always: 'Always available, but permanently on screen.',
+        never: 'Never appears automatically; the keyboard remains available.',
       },
       androidOverlayTriggerDisabled: {
         keyboard:
@@ -2183,6 +2263,9 @@ export const en: typeof zhCN = {
         'SendInput Unicode types directly, bypassing TSF / IME — no input-method switching needed.',
       streamingInsertHintLinux:
         'Uses fcitx5 plugin for text submission; streaming insertion uses enigo + XTest for keystroke synthesis.',
+      windowsCompositionInputLabel: 'Show live transcript in the input box (Windows)',
+      windowsCompositionInputDesc:
+        'While you speak, the recognized text appears underlined in the input box and is replaced by the final result when you finish. Requires the OpenLess TSF input component and a target app that supports the Text Services Framework (TSF).',
       streamingInsertSaveClipboardLabel: 'Copy to clipboard',
       streamingInsertSaveClipboardHint:
         'After a successful insert, write the final text to the clipboard so Cmd+V can paste it again. Off = clipboard is never touched.',
@@ -2190,6 +2273,9 @@ export const en: typeof zhCN = {
       localAsrDesc:
         'Move transcription from cloud ASR to on-device inference. Offline / privacy-sensitive use only.',
       localAsrWarningShort: 'Local inference is slower; under-spec hardware may drop words.',
+      localAsrFallbackLabel: 'Use the local model when cloud ASR fails',
+      localAsrFallbackDesc:
+        'On a weak or missing connection, transcribe the recording with the downloaded local model instead of waiting for cloud retries. Requires a downloaded local model.',
       qwen3Desc: 'Once enabled, the ASR provider will be taken over.',
       sherpaDesc: 'Once enabled, the ASR provider will be taken over.',
       foundryDesc: 'Once enabled, the ASR provider will be taken over.',
