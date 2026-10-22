@@ -23,11 +23,12 @@ use futures_util::{SinkExt, StreamExt};
 use parking_lot::Mutex as ParkingMutex;
 use serde_json::{json, Value};
 use tokio::net::TcpStream;
-use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+
+use crate::config::{TaskSpawner, TokioTaskSpawner};
 
 use super::{AudioConsumer, RawTranscript};
 
@@ -108,7 +109,6 @@ struct SyncState {
     bytes_received: u64,
     task_started: bool,
     task_finished: bool,
-    runtime: Option<Handle>,
     start: Option<Instant>,
     final_tx: Option<oneshot::Sender<Result<RawTranscript, SonioxASRError>>>,
     send_tx: Option<mpsc::UnboundedSender<SendItem>>,
@@ -120,6 +120,7 @@ struct SyncState {
 
 pub struct SonioxStreamingASR {
     credentials: SonioxCredentials,
+    task_spawner: Arc<dyn TaskSpawner>,
     state: ParkingMutex<SyncState>,
     writer: SharedWriter,
     final_rx: ParkingMutex<Option<oneshot::Receiver<Result<RawTranscript, SonioxASRError>>>>,
@@ -127,8 +128,16 @@ pub struct SonioxStreamingASR {
 
 impl SonioxStreamingASR {
     pub fn new(credentials: SonioxCredentials) -> Self {
+        Self::with_task_spawner(credentials, Arc::new(TokioTaskSpawner))
+    }
+
+    pub fn with_task_spawner(
+        credentials: SonioxCredentials,
+        task_spawner: Arc<dyn TaskSpawner>,
+    ) -> Self {
         Self {
             credentials,
+            task_spawner,
             state: ParkingMutex::new(SyncState::default()),
             writer: Arc::new(AsyncMutex::new(None)),
             final_rx: ParkingMutex::new(None),
@@ -156,7 +165,6 @@ impl SonioxStreamingASR {
         {
             let mut st = self.state.lock();
             *st = SyncState::default();
-            st.runtime = Some(Handle::current());
             st.start = Some(Instant::now());
             st.final_tx = Some(final_tx);
             st.send_tx = Some(send_tx);
@@ -164,7 +172,7 @@ impl SonioxStreamingASR {
         *self.final_rx.lock() = Some(final_rx);
 
         let writer_for_worker = Arc::clone(&self.writer);
-        tokio::spawn(async move {
+        self.task_spawner.spawn(Box::pin(async move {
             while let Some(item) = send_rx.recv().await {
                 match item {
                     SendItem::Audio(chunk) => {
@@ -173,15 +181,14 @@ impl SonioxStreamingASR {
                         }
                     }
                     SendItem::Finish(done) => {
-                        let result =
-                            send_text(&writer_for_worker, String::new()).await.map_err(|e| {
-                                SonioxASRError::SendFailed(e.to_string())
-                            });
+                        let result = send_text(&writer_for_worker, String::new())
+                            .await
+                            .map_err(|e| SonioxASRError::SendFailed(e.to_string()));
                         let _ = done.send(result);
                     }
                 }
             }
-        });
+        }));
 
         // 配置消息必须在任何音频之前发出。
         send_text(
@@ -196,7 +203,7 @@ impl SonioxStreamingASR {
         self.state.lock().config_sent = true;
 
         let weak_self = Arc::downgrade(self);
-        tokio::spawn(async move {
+        self.task_spawner.spawn(Box::pin(async move {
             let mut read = read;
             while let Some(msg) = read.next().await {
                 let Some(this) = weak_self.upgrade() else {
@@ -222,7 +229,7 @@ impl SonioxStreamingASR {
                     }
                 }
             }
-        });
+        }));
 
         Ok(())
     }
@@ -280,19 +287,9 @@ impl SonioxStreamingASR {
         st.task_finished = true;
         drop(st);
         let writer = Arc::clone(&self.writer);
-        if let Ok(handle) = Handle::try_current() {
-            handle.spawn(async move {
-                let _ = close_writer(&writer).await;
-            });
-        } else {
-            std::thread::spawn(move || {
-                if let Ok(rt) = tokio::runtime::Runtime::new() {
-                    rt.block_on(async move {
-                        let _ = close_writer(&writer).await;
-                    });
-                }
-            });
-        }
+        self.task_spawner.spawn(Box::pin(async move {
+            let _ = close_writer(&writer).await;
+        }));
     }
 
     fn handle_text_message(&self, text: &str) -> bool {
@@ -336,7 +333,10 @@ impl SonioxStreamingASR {
         // once and never repeated」一致）。
         if let Some(tokens) = value.get("tokens").and_then(Value::as_array) {
             for token in tokens {
-                let is_final = token.get("is_final").and_then(Value::as_bool).unwrap_or(false);
+                let is_final = token
+                    .get("is_final")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 if !is_final {
                     continue;
                 }
@@ -350,7 +350,11 @@ impl SonioxStreamingASR {
 
         self.mark_task_started();
 
-        if value.get("finished").and_then(Value::as_bool).unwrap_or(false) {
+        if value
+            .get("finished")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             self.finish_success();
             false
         } else {
@@ -435,11 +439,9 @@ impl SonioxStreamingASR {
 
     fn close_on_runtime(&self) {
         let writer = Arc::clone(&self.writer);
-        if let Some(handle) = self.state.lock().runtime.clone() {
-            handle.spawn(async move {
-                let _ = close_writer(&writer).await;
-            });
-        }
+        self.task_spawner.spawn(Box::pin(async move {
+            let _ = close_writer(&writer).await;
+        }));
     }
 }
 
@@ -556,9 +558,7 @@ mod tests {
     fn make_response(tokens: &[(&str, bool)], finished: bool) -> Value {
         let tokens: Vec<Value> = tokens
             .iter()
-            .map(|(text, is_final)| {
-                json!({ "text": text, "is_final": is_final })
-            })
+            .map(|(text, is_final)| json!({ "text": text, "is_final": is_final }))
             .collect();
         json!({ "tokens": tokens, "finished": finished })
     }
@@ -574,7 +574,9 @@ mod tests {
     /// 安装一个 oneshot 终结 channel，让 `finish_success`/`finish_error` 的产出
     /// 能被取回（`open_session` 真实路径会装一个；单测里不走网络，直接手动装一个）。
     /// 返回 receiver 供断言 await。
-    fn install_final_tx(asr: &SonioxStreamingASR) -> oneshot::Receiver<Result<RawTranscript, SonioxASRError>> {
+    fn install_final_tx(
+        asr: &SonioxStreamingASR,
+    ) -> oneshot::Receiver<Result<RawTranscript, SonioxASRError>> {
         let (tx, rx) = oneshot::channel();
         asr.state.lock().final_tx = Some(tx);
         rx
@@ -595,7 +597,11 @@ mod tests {
 
     #[test]
     fn config_message_includes_terms_when_present() {
-        let terms = vec!["Celebrex".to_string(), "  ".to_string(), "Zyrtec".to_string()];
+        let terms = vec![
+            "Celebrex".to_string(),
+            "  ".to_string(),
+            "Zyrtec".to_string(),
+        ];
         let msg = build_config_message("k", "stt-rt-v5", &terms);
         let v: Value = serde_json::from_str(&msg).unwrap();
         let context_terms = v["context"]["terms"].as_array().unwrap();
@@ -636,7 +642,10 @@ mod tests {
 
         let r1 = make_response(&[("How", false)], false);
         asr.handle_response(&r1);
-        let r2 = make_response(&[("How", true), (" ", true), ("are", true), (" you", true)], false);
+        let r2 = make_response(
+            &[("How", true), (" ", true), ("are", true), (" you", true)],
+            false,
+        );
         asr.handle_response(&r2);
         let r3 = make_response(&[("?", true)], true);
         asr.handle_response(&r3);

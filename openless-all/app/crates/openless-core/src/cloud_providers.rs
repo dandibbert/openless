@@ -17,9 +17,8 @@ use crate::asr::{
     BailianCredentials, BailianRealtimeASR, DashScopeMultimodalASR, DictionaryHotword,
     ElevenLabsBatchASR, GeminiBatchASR, MimoBatchASR, Qwen3RealtimeASR, Qwen3RealtimeCredentials,
     SonioxCredentials, SonioxStreamingASR, StepfunRealtimeASR, StepfunRealtimeCredentials,
-    TencentCloudCredentials,
-    TencentCloudStreamingASR, VolcengineCredentials, VolcengineStreamingASR, WhisperBatchASR,
-    XfyunCredentials, XfyunStreamingASR,
+    TencentCloudCredentials, TencentCloudStreamingASR, VolcengineCredentials,
+    VolcengineStreamingASR, WhisperBatchASR, XfyunCredentials, XfyunStreamingASR,
 };
 use crate::config::{TaskSpawner, TokioTaskSpawner};
 use crate::credentials::{
@@ -650,12 +649,15 @@ async fn build_cloud_transcription_session(
                 ));
             }
             let terms = context.polish.hotwords.clone();
-            let provider = Arc::new(SonioxStreamingASR::new(SonioxCredentials {
-                api_key,
-                endpoint,
-                model: effective_model.clone(),
-                terms,
-            }));
+            let provider = Arc::new(SonioxStreamingASR::with_task_spawner(
+                SonioxCredentials {
+                    api_key,
+                    endpoint,
+                    model: effective_model.clone(),
+                    terms,
+                },
+                Arc::clone(&task_spawner),
+            ));
             provider.open_session().await.map_err(map_asr_error)?;
             (
                 CloudTranscriptionSessionKind::Soniox(provider),
