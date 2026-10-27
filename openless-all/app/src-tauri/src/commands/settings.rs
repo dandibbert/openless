@@ -1,6 +1,26 @@
 use super::*;
 
 #[tauri::command]
+pub fn get_android_audio_effects_status() -> serde_json::Value {
+    #[cfg(target_os = "android")]
+    {
+        crate::recorder::android_capture::status()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        serde_json::json!({"aecAvailable": false, "noiseSuppressionAvailable": false, "agcAvailable": false, "runtime": null})
+    }
+}
+
+#[tauri::command]
+pub fn set_android_audio_monitoring(enabled: bool) {
+    #[cfg(target_os = "android")]
+    crate::recorder::android_capture::set_monitoring(enabled);
+    #[cfg(not(target_os = "android"))]
+    let _ = enabled;
+}
+
+#[tauri::command]
 pub fn get_settings(core: CoreState<'_>) -> UserPreferences {
     let mut prefs = core.get_preferences();
     prefs.update_channel = effective_update_channel(None, &prefs, env!("CARGO_PKG_VERSION"));
@@ -231,6 +251,7 @@ pub(crate) fn sync_low_latency_capture_preferences(prefs: &UserPreferences) {
             .then(|| prefs.microphone_device_name.clone()),
         openless_core::AudioProcessingConfig {
             enhancement_enabled: prefs.audio_enhancement_enabled,
+            echo_cancellation_enabled: prefs.echo_cancellation_enabled,
             dsp: prefs.audio_dsp,
         },
     );
@@ -239,7 +260,10 @@ pub(crate) fn sync_low_latency_capture_preferences(prefs: &UserPreferences) {
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn sync_low_latency_capture_preferences(_prefs: &UserPreferences) {}
 
-fn voice_activation_preferences_changed(previous: &UserPreferences, next: &UserPreferences) -> bool {
+fn voice_activation_preferences_changed(
+    previous: &UserPreferences,
+    next: &UserPreferences,
+) -> bool {
     previous.voice_activation_enabled != next.voice_activation_enabled
         || previous.voice_activation_wake_enabled != next.voice_activation_wake_enabled
         || previous.voice_activation_finish_enabled != next.voice_activation_finish_enabled
@@ -250,9 +274,7 @@ fn voice_activation_preferences_changed(previous: &UserPreferences, next: &UserP
         || previous.microphone_device_name != next.microphone_device_name
 }
 
-fn validate_voice_activation_preferences(
-    prefs: &UserPreferences,
-) -> Result<(), String> {
+fn validate_voice_activation_preferences(prefs: &UserPreferences) -> Result<(), String> {
     openless_core::VoiceActivationConfig {
         enabled: prefs.voice_activation_enabled,
         wake_enabled: prefs.voice_activation_wake_enabled,
@@ -517,6 +539,28 @@ mod tests {
         assert_eq!(stale_payload.update_channel, UpdateChannel::Stable);
         assert!(stale_payload.update_channel_explicit);
     }
+
+    #[test]
+    fn android_update_url_validation_requires_exact_https_release_hosts() {
+        assert!(is_allowed_android_update_url(
+            "https://github.com/dandibbert/openless/releases/latest/download/OpenLess.apk"
+        ));
+        assert!(is_allowed_android_update_url(
+            "https://fastgit.cc/https://github.com/dandibbert/openless/releases/latest/download/OpenLess.apk"
+        ));
+        assert!(!is_allowed_android_update_url(
+            "https://github.com@attacker.example/dandibbert/openless/releases/package.apk"
+        ));
+        assert!(!is_allowed_android_update_url(
+            "https://github.com.attacker.example/dandibbert/openless/releases/package.apk"
+        ));
+        assert!(!is_allowed_android_update_url(
+            "http://github.com/dandibbert/openless/releases/latest/download/OpenLess.apk"
+        ));
+        assert!(!is_allowed_android_update_url(
+            "https://github.com/Open-Less/openless/releases/latest/download/OpenLess.apk"
+        ));
+    }
 }
 
 // ─────────────────────────── release channel (Beta opt-in) ───────────────────────────
@@ -690,20 +734,18 @@ fn extract_between(haystack: &str, open: &str, close: &str) -> Option<String> {
 // ─────────────────────── Channel-aware updater check ────────────────────────
 //
 // Replaces the frontend's previous direct import('@tauri-apps/plugin-updater').check() path:
-// - Stable channel: the builder keeps tauri.conf's stable manifest URL endpoints untouched.
-// - Beta channel: fetch_latest_beta_release gets the latest prerelease tag, builds the -beta
-//   manifest URL (as a mirror + direct pair), then
-//   builder.endpoints(vec![url])?.build()?.check().
+// - Stable channel: the builder keeps tauri.conf's Stable manifest endpoint untouched, which
+//   this fork's GitHub releases/latest manifest URL.
+// - Beta channel: resolve the latest prerelease tag from this fork and
+//   dynamically swap in the tagged -beta manifest with mirror fallback.
+//
+// The fork deliberately retains its own signed GitHub Release updater. It must
+// never switch to the upstream project's CDN without an explicit migration.
 //
 // The returned Metadata shape exactly matches plugin-updater's JS UpdateMetadata (rid +
 // currentVersion and other camelCase fields), so the frontend can call
 // `new Update(metadata)` directly and reuse the plugin's download / install / close
 // implementations instead of writing our own download and signature verification.
-//
-// Physical isolation: manifests published from Beta tags carry a `-beta` filename suffix
-// (see the comment at line 382 of release-tauri.yml), separate from Stable's
-// `latest-{tgt}-{arch}.json` in the GitHub Release assets — even if buggy code passed a
-// Beta URL to a Stable user, HTTP returns 404 outright; the wrong artifact is unreachable.
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -720,7 +762,7 @@ pub struct AppUpdateMetadata {
     pub raw_json: serde_json::Value,
 }
 
-/// Resolves the manifest source, then runs plugin-updater's standard check flow.
+/// Resolves the update endpoint, then runs plugin-updater's standard check flow.
 /// Channel: uses an explicitly passed `channel` (the About page always checks Stable, the
 /// advanced page's Beta section checks Beta); when absent, uses the user's explicit
 /// channel choice; when none chosen yet, follows the current build type.
@@ -742,9 +784,8 @@ pub async fn app_check_update_with_channel<R: tauri::Runtime>(
         builder = builder.timeout(std::time::Duration::from_millis(ms));
     }
     if matches!(channel, UpdateChannel::Beta) {
-        let urls = resolve_beta_manifest_endpoints().await?;
         builder = builder
-            .endpoints(urls)
+            .endpoints(resolve_beta_manifest_endpoints().await?)
             .map_err(|e| format!("set beta endpoints: {e}"))?;
     }
     let updater = builder.build().map_err(|e| format!("build updater: {e}"))?;
@@ -770,28 +811,16 @@ pub async fn app_check_update_with_channel<R: tauri::Runtime>(
     Ok(Some(metadata))
 }
 
-/// Builds the -beta manifest URL pair from the latest prerelease tag found by
-/// fetch_latest_beta_release.
-/// Order: mirror first (fastgit.cc proxies GitHub), then direct — matching tauri.conf's
-/// existing Stable endpoints so mainland-China access hits the CDN first.
+/// Resolve this fork's latest Beta tag and return mirror + direct endpoints.
 #[cfg(not(mobile))]
 async fn resolve_beta_manifest_endpoints() -> Result<Vec<url::Url>, String> {
     let Some(latest) = fetch_latest_beta_release().await? else {
         return Err("尚未发布过 Beta 版本".to_string());
     };
-    let tag = latest.tag_name;
-    // {{target}} / {{arch}} placeholders are substituted by the plugin at check time. A
-    // Rust raw string (r#""#) needs no escaped double braces and is cleaner than format!-ing
-    // the literal.
-    let mirror = format!(
-        "https://fastgit.cc/https://github.com/dandibbert/openless/releases/download/{tag}/latest-{{{{target}}}}-{{{{arch}}}}-beta-mirror.json"
-    );
-    let direct = format!(
-        "https://github.com/dandibbert/openless/releases/download/{tag}/latest-{{{{target}}}}-{{{{arch}}}}-beta.json"
-    );
-    let mirror_url = url::Url::parse(&mirror).map_err(|e| format!("parse beta mirror url: {e}"))?;
-    let direct_url = url::Url::parse(&direct).map_err(|e| format!("parse beta direct url: {e}"))?;
-    Ok(vec![mirror_url, direct_url])
+    crate::update_source::beta_endpoint_templates(&latest.tag_name)
+        .into_iter()
+        .map(|value| url::Url::parse(&value).map_err(|e| format!("parse beta endpoint: {e}")))
+        .collect()
 }
 
 #[cfg(mobile)]
@@ -814,6 +843,28 @@ pub async fn app_check_update_with_channel(
     }
 }
 
+fn is_allowed_android_update_url(raw: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(raw) else {
+        return false;
+    };
+    if parsed.scheme() != "https"
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.port().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return false;
+    }
+    match (parsed.host_str(), parsed.path()) {
+        (Some("github.com"), path) => path.starts_with("/dandibbert/openless/releases/"),
+        (Some("fastgit.cc"), path) => {
+            path.starts_with("/https://github.com/dandibbert/openless/releases/")
+        }
+        _ => false,
+    }
+}
+
 #[cfg(mobile)]
 #[tauri::command]
 pub async fn app_download_and_install_android_update(
@@ -822,12 +873,9 @@ pub async fn app_download_and_install_android_update(
     signature: String,
     version: String,
 ) -> Result<(), String> {
-    // Security: validate the URL before downloading to prevent SSRF (e.g. intranet metadata
-    // endpoints, localhost services). Only the known GitHub direct links and the fastgit
-    // mirror prefix are allowed.
-    const DIRECT_BASE: &str = "https://github.com/dandibbert/openless";
-    const MIRROR_BASE: &str = "https://fastgit.cc/https://github.com/dandibbert/openless";
-    if !url.starts_with(DIRECT_BASE) && !url.starts_with(MIRROR_BASE) {
+    // Parse and validate the host before downloading so userinfo and hostname-prefix tricks
+    // cannot turn the signed update fetch into an SSRF primitive.
+    if !is_allowed_android_update_url(&url) {
         return Err(format!("不信任的更新 URL，拒绝下载: {url}"));
     }
     #[cfg(target_os = "android")]

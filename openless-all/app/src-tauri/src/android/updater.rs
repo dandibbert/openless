@@ -11,9 +11,7 @@ mod android_impl {
         beta_manifest_urls, format_manifest_error, map_abi_to_arch, stable_manifest_urls,
         verify_updater_signature, version_is_newer, INSTALLER_NOT_OPENED_MSG, UPDATER_PUBKEY_B64,
     };
-    use crate::commands::{
-        fetch_latest_beta_release, parse_latest_beta_from_atom, AppUpdateMetadata,
-    };
+    use crate::commands::{fetch_latest_beta_release, AppUpdateMetadata};
     use crate::net;
     use crate::types::UpdateChannel;
 
@@ -206,11 +204,6 @@ mod android_impl {
             return Err(INSTALLER_NOT_OPENED_MSG.to_string());
         }
         Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub fn parse_beta_atom(body: &str) -> Option<crate::commands::LatestBetaRelease> {
-        parse_latest_beta_from_atom(body)
     }
 }
 

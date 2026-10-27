@@ -32,17 +32,11 @@ pub fn version_is_newer(remote: &str, current: &str) -> bool {
 }
 
 pub fn stable_manifest_urls(arch: &str) -> Vec<String> {
-    vec![
-        format!("{MIRROR_BASE}/releases/latest/download/latest-android-{arch}-mirror.json"),
-        format!("{DIRECT_BASE}/releases/latest/download/latest-android-{arch}.json"),
-    ]
+    crate::update_source::manifest_urls(crate::types::UpdateChannel::Stable, "android", arch, None)
 }
 
 pub fn beta_manifest_urls(arch: &str, tag: &str) -> Vec<String> {
-    vec![
-        format!("{MIRROR_BASE}/releases/download/{tag}/latest-android-{arch}-beta-mirror.json"),
-        format!("{DIRECT_BASE}/releases/download/{tag}/latest-android-{arch}-beta.json"),
-    ]
+    crate::update_source::manifest_urls(crate::types::UpdateChannel::Beta, "android", arch, Some(tag))
 }
 
 /// Human-readable manifest fetch failure for UI tooltips.

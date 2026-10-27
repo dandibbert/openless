@@ -18,6 +18,7 @@ const repositoryReferences = [
   'openless-all/app/src-tauri/src/android/updater_logic.rs',
   'openless-all/app/src-tauri/src/commands/mod.rs',
   'openless-all/app/src-tauri/src/commands/settings.rs',
+  'openless-all/app/src-tauri/src/update_source.rs',
   'openless-all/app/src-tauri/tauri.conf.json',
   'openless-all/app/src/components/AutoUpdate.tsx',
   'openless-all/app/src/components/SettingsModal.tsx',
@@ -41,9 +42,26 @@ assert(
   Array.isArray(updaterEndpoints) && updaterEndpoints.length > 0,
   'desktop updater endpoints are missing',
 );
-assert(
-  updaterEndpoints.every((endpoint) => endpoint.includes(currentRepo)),
-  'desktop updater endpoints must use the current GitHub repository',
+
+// This fork publishes update manifests to its own GitHub Releases. Protect the
+// fork against silently switching users to the upstream project's update CDN.
+const updateSource = await readFile(
+  join(repoRoot, 'openless-all/app/src-tauri/src/update_source.rs'),
+  'utf8',
 );
+assert(
+  updateSource.includes(currentRepo),
+  'update_source.rs must use the current fork',
+);
+for (const endpoint of updaterEndpoints) {
+  assert(
+    endpoint.includes(currentRepo) && endpoint.includes('/releases/latest/download/'),
+    `desktop updater endpoint must point at the fork release: ${endpoint}`,
+  );
+  assert(
+    endpoint.includes('{{target}}') && endpoint.includes('{{arch}}'),
+    `desktop updater endpoint must keep the {{target}}/{{arch}} placeholders: ${endpoint}`,
+  );
+}
 
 console.log('repository-owner-contract.test.mjs passed');
