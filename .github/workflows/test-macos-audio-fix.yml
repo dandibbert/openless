@@ -1,0 +1,43 @@
+name: Test macOS WebKit audio fix DMG
+
+on:
+  push:
+    branches:
+      - fix/macos-webkit-audio-20261027
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: openless-all/app/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Configure macOS
+        working-directory: openless-all/app
+        run: bash scripts/macos-build-env.sh
+      - name: Install dependencies
+        working-directory: openless-all/app
+        run: npm ci
+      - name: Build macOS ARM64 DMG (ad-hoc signed)
+        working-directory: openless-all/app
+        env:
+          INSTALL: '0'
+        run: bash scripts/build-mac.sh
+      - name: Upload test DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenLess-macOS-arm64-audio-fix
+          path: openless-all/app/src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 7
