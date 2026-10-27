@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { isAndroid, isTauri } from '../lib/ipc';
+import { detectOS } from './WindowChrome';
 import { playRecordStartCue, primeAudioCue, stopAudioCue } from '../lib/audioCue';
 import type { CapsuleState, UserPreferences } from '../lib/types';
 
@@ -18,6 +19,7 @@ interface CapsulePayload {
 
 export function AudioCueListener() {
   const audioCueEnabledRef = useRef<boolean>(true);
+  const macNativeCue = isTauri && detectOS() === 'mac';
   const prevStateRef = useRef<CapsuleState>('idle' as CapsuleState);
   const [nativeCueOwner, setNativeCueOwner] = useState<boolean | null>(isTauri ? null : false);
   useEffect(() => {
@@ -83,9 +85,10 @@ export function AudioCueListener() {
 
   // Prime the AudioContext
   useEffect(() => {
-    if (!isTauri || !audioCueRuntimeEnabled) return;
+    // Never start WebKit's output client just to prime the start cue on macOS.
+    if (!isTauri || !audioCueRuntimeEnabled || macNativeCue) return;
     primeAudioCue();
-  }, [audioCueRuntimeEnabled]);
+  }, [audioCueRuntimeEnabled, macNativeCue]);
 
   // Listen for capsule state edges
   useEffect(() => {
@@ -99,9 +102,19 @@ export function AudioCueListener() {
         const prev = prevStateRef.current;
         prevStateRef.current = state;
         if (state === 'recording' && prev !== 'recording') {
-          if (audioCueEnabledRef.current) playRecordStartCue();
+          if (audioCueEnabledRef.current) {
+            if (macNativeCue) {
+              void import('@tauri-apps/api/core').then(({ invoke }) => invoke('play_native_audio_cue')).catch(() => {});
+            } else {
+              playRecordStartCue();
+            }
+          }
         } else if (state !== 'recording' && prev === 'recording') {
-          stopAudioCue();
+          if (macNativeCue) {
+            void import('@tauri-apps/api/core').then(({ invoke }) => invoke('stop_native_audio_cue')).catch(() => {});
+          } else {
+            stopAudioCue();
+          }
         }
       })
         .then((fn) => {
@@ -114,7 +127,7 @@ export function AudioCueListener() {
       cancelled = true;
       unlisten?.();
     };
-  }, [audioCueRuntimeEnabled]);
+  }, [audioCueRuntimeEnabled, macNativeCue]);
 
   return null;
 }
