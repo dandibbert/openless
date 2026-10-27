@@ -799,7 +799,15 @@ export function RecordingInputSection({
             <Toggle on={prefs.audioCueOnRecord} onToggle={onAudioCueChange} />
             <button
               type="button"
-              onClick={() => playRecordStartCue()}
+              onClick={() => {
+                if (isTauri && os === 'mac') {
+                  void import('@tauri-apps/api/core')
+                    .then(({ invoke }) => invoke('play_native_audio_cue'))
+                    .catch((error) => console.warn('[audio-cue] native preview failed', error));
+                } else {
+                  playRecordStartCue();
+                }
+              }}
               style={{
                 padding: '5px 12px',
                 fontSize: 12,
