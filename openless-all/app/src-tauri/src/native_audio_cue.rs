@@ -5,6 +5,19 @@ static GENERATION: AtomicU64 = AtomicU64::new(0);
 pub(crate) fn stop() {
     GENERATION.fetch_add(1, Ordering::Relaxed);
 }
+// Short-lived native output replaces the permanently running WKWebView AudioContext on macOS.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub(crate) fn play_native_audio_cue() {
+    play_start();
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub(crate) fn stop_native_audio_cue() {
+    stop();
+}
+
 pub(crate) fn play_start() {
     let generation = GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
     let _ = std::thread::Builder::new()
