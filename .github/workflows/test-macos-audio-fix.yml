@@ -11,7 +11,8 @@ permissions:
 
 jobs:
   macos-arm64:
-    runs-on: macos-latest
+    # Use the macOS 15 ARM64 pool while macos-latest jobs are waiting for capacity.
+    runs-on: macos-15
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
