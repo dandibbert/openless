@@ -251,6 +251,10 @@ macro_rules! app_invoke_handler_desktop {
         tauri::generate_handler![
             commands::get_startup_snapshot,
             desktop_resources::desktop_low_memory_active,
+            #[cfg(target_os = "macos")]
+            native_audio_cue::play_native_audio_cue,
+            #[cfg(target_os = "macos")]
+            native_audio_cue::stop_native_audio_cue,
             native_capsule::native_capsule_set_locale,
             get_capsule_auxiliary_snapshot,
             native_capsule_status,
