@@ -171,8 +171,7 @@ try {
     originals.push(`${directory}/${apk}`);
     return [apk, `${apk}.sig`, alias, `${alias}.sig`];
   });
-  // The manifests are still written (they feed the CDN sync through a workflow artifact) but
-  // must never be re-attached to the release: the in-app updater reads them from the CDN.
+  // This fork serves signed manifests from GitHub Releases; include them alongside APKs.
   const manifests = ANDROID_ABI_MATRIX.flatMap(({ abi }) => [
     `latest-android-${abi}.json`,
     `latest-android-${abi}-mirror.json`,
@@ -197,14 +196,17 @@ try {
   const assets = readFileSync(join(releaseTmp, 'android-release-files.txt'), 'utf8')
     .trim()
     .split(/\r?\n/);
-  assert.deepEqual(assets.sort(), names.map((name) => `${directory}/${name}`).sort());
+  assert.deepEqual(
+    assets.sort(),
+    [...names, ...manifests].map((name) => `${directory}/${name}`).sort(),
+  );
   const manifestUpload = parsed.jobs['publish-android-release'].steps.find((step) =>
     step.uses?.startsWith('actions/upload-artifact@'),
   );
   assert.match(
     manifestUpload?.with.path,
     /latest-android-\*\.json/,
-    'manifests must leave the run as an artifact so the CDN sync can publish them',
+    'manifests must also leave the run as an artifact',
   );
 } finally {
   rmSync(releaseTmp, { recursive: true, force: true });

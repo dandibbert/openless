@@ -15,23 +15,30 @@ for (const name of ['release-tauri.yml', 'android-apk.yml']) {
     `${name}: no channel may publish a partially built release`,
   );
   assert.match(publishers[0].with.prerelease, /OPENLESS_RELEASE_CHANNEL == 'beta'/);
-  // Updater manifests belong to the CDN, not to the release assets: current clients read
-  // `/updates/{stable,beta}/` (see src-tauri/src/update_source.rs), and cloning them into the
-  // release produced fourteen near-identical files per tag.
-  assert.doesNotMatch(
-    publishers[0].with.files,
-    /latest-[^\s]*\.json/,
-    `${name}: updater manifests must not be attached to the release`,
-  );
+  // The fork has no updater CDN; its signed manifests must be published alongside
+  // the installer, not only in an Actions artifact that users cannot update from.
+  if (name === 'release-tauri.yml') {
+    assert.match(
+      publishers[0].with.files,
+      /bundle\/latest-\*\.json/,
+      'Tauri release must attach update manifests',
+    );
+  } else {
+    const collect = steps.find((step) => step.id === 'release_assets');
+    assert.match(
+      collect.run,
+      /latest-android-\*\.json/,
+      'Android release must collect its signed update manifests',
+    );
+  }
   const manifestUploads = steps.filter(
     (step) =>
       step.uses?.startsWith('actions/upload-artifact@') &&
       /latest-[^\s]*\.json/.test(step.with?.path ?? ''),
   );
-  assert.equal(
-    manifestUploads.length,
-    1,
-    `${name}: exactly one artifact must carry the updater manifests for the CDN sync`,
+  assert.ok(
+    manifestUploads.length >= 1,
+    `${name}: updater manifests must also be retained as build artifacts`,
   );
 }
 const sync = workflow('sync-homebrew-cask.yml');
