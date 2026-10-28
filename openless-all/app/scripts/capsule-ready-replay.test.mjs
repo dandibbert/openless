@@ -543,7 +543,7 @@ for (const overlay of [false, true]) {
   }
 }
 // The main window's recording cue must not see synthetic mirror lifecycle events either.
-{
+for (const macNativeCue of [false, true]) {
   const cueSource = readFileSync(
     new URL('../src/components/AudioCue.tsx', import.meta.url),
     'utf8',
@@ -570,14 +570,33 @@ for (const overlay of [false, true]) {
   const bus = eventBus();
   let plays = 0;
   let stops = 0;
+  let webAudioCalls = 0;
   const scope = {
     isTauri: true,
+    macNativeCue,
     audioCueRuntimeEnabled: true,
     prevStateRef: { current: 'idle' },
     audioCueEnabledRef: { current: true },
-    playRecordStartCue: () => plays++,
-    stopAudioCue: () => stops++,
+    playRecordStartCue: () => {
+      webAudioCalls++;
+      plays++;
+    },
+    stopAudioCue: () => {
+      webAudioCalls++;
+      stops++;
+    },
     require(name) {
+      if (name === '@tauri-apps/api/core')
+        return {
+          invoke: async (command) => {
+            assert.ok(macNativeCue, 'only macOS uses native cues');
+            if (command === 'play_native_audio_cue') plays++;
+            else {
+              assert.equal(command, 'stop_native_audio_cue');
+              stops++;
+            }
+          },
+        };
       if (name === '@tauri-apps/api/webviewWindow')
         return { getCurrentWebviewWindow: () => ({ label: 'main' }) };
       assert.equal(name, '@tauri-apps/api/event');
@@ -590,12 +609,15 @@ for (const overlay of [false, true]) {
   const cleanup = scope.effect();
   await until(() => bus.size === 1);
   bus.emit('main', 'capsule:state', { state: 'recording' });
+  await until(() => plays === 1);
   bus.emit('capsule-mirror-0', 'capsule:state', { state: 'idle' });
   bus.emit('main', 'capsule:state', { state: 'recording' });
   assert.equal(plays, 1, 'hidden mirror cleanup must not replay the recording cue');
   assert.equal(stops, 0);
   bus.emit('main', 'capsule:state', { state: 'idle' });
+  await until(() => stops === 1);
   assert.equal(stops, 1);
+  assert.equal(webAudioCalls, macNativeCue ? 0 : 2);
   cleanup();
   assert.equal(bus.size, 0);
 }
