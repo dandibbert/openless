@@ -97,26 +97,34 @@ export function AudioCueListener() {
     let cancelled = false;
     (async () => {
       const { listen } = await import('@tauri-apps/api/event');
-      listen<CapsulePayload>('capsule:state', (event) => {
-        const state = event.payload.state;
-        const prev = prevStateRef.current;
-        prevStateRef.current = state;
-        if (state === 'recording' && prev !== 'recording') {
-          if (audioCueEnabledRef.current) {
+      const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+      if (cancelled) return;
+      const target = { kind: 'WebviewWindow' as const, label: getCurrentWebviewWindow().label };
+      listen<CapsulePayload>(
+        'capsule:state',
+        (event) => {
+          if (cancelled) return;
+          const state = event.payload.state;
+          const prev = prevStateRef.current;
+          prevStateRef.current = state;
+          if (state === 'recording' && prev !== 'recording') {
+            if (audioCueEnabledRef.current) {
+              if (macNativeCue) {
+                void import('@tauri-apps/api/core').then(({ invoke }) => invoke('play_native_audio_cue')).catch(() => {});
+              } else {
+                playRecordStartCue();
+              }
+            }
+          } else if (state !== 'recording' && prev === 'recording') {
             if (macNativeCue) {
-              void import('@tauri-apps/api/core').then(({ invoke }) => invoke('play_native_audio_cue')).catch(() => {});
+              void import('@tauri-apps/api/core').then(({ invoke }) => invoke('stop_native_audio_cue')).catch(() => {});
             } else {
-              playRecordStartCue();
+              stopAudioCue();
             }
           }
-        } else if (state !== 'recording' && prev === 'recording') {
-          if (macNativeCue) {
-            void import('@tauri-apps/api/core').then(({ invoke }) => invoke('stop_native_audio_cue')).catch(() => {});
-          } else {
-            stopAudioCue();
-          }
-        }
-      })
+        },
+        { target },
+      )
         .then((fn) => {
           if (cancelled) fn();
           else unlisten = fn;
