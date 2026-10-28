@@ -212,6 +212,7 @@ export const ASR_LABELS = [
   { id: 'experimental-embedding-gemma', nameKey: 'asrExperimentalGemma' },
   { id: 'volcengine', nameKey: 'asrVolcengine' },
   { id: 'soniox', nameKey: 'asrSoniox' },
+  { id: 'assemblyai', nameKey: 'asrAssemblyAi' },
   { id: 'elevenlabs', nameKey: 'asrElevenLabs' },
   { id: 'bailian', nameKey: 'asrBailian' },
   { id: 'bailian-qwen3-realtime', nameKey: 'asrBailianQwen3' },

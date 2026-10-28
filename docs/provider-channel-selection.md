@@ -28,6 +28,31 @@ provider validation request or automatically choose another enabled provider
 after a network failure. An ongoing recording retains the channel identity,
 protocol and model selected at the start of that recording.
 
+## AssemblyAI streaming speech recognition
+
+Add an **AssemblyAI realtime ASR** channel in the ASR provider settings, enter
+your AssemblyAI API key, then enable the channel and move it first. The default
+model is `universal-3-6-pro`; the model picker also offers `universal-3-5-pro`,
+`universal-streaming-english`, and `universal-streaming-multilingual`.
+
+The default endpoint is `wss://streaming.assemblyai.com/v3/ws`. For data residency,
+use `wss://streaming.us.assemblyai.com/v3/ws` or
+`wss://streaming.eu.assemblyai.com/v3/ws`. Authentication uses the WebSocket
+`Authorization` header, without a `Bearer` prefix; do not put API keys in the URL.
+
+OpenLess sends 16 kHz mono PCM16 audio and displays full transcript snapshots as
+turns arrive. Enabled dictionary phrases become `keyterms_prompt`, with duplicate
+and empty phrases removed; only the first 100 unique phrases of at most 50
+characters each are sent. A formatted turn replaces its earlier text rather than
+being appended again.
+
+Stopping recording sends `Terminate` and waits for the last turn and `Termination`
+before closing. Cancellation and timeouts close the connection as well, since
+AssemblyAI bills streaming sessions for connection time. **Test connection** also
+opens a short billable streaming session using silence.
+
+Protocol reference: [AssemblyAI streaming WebSocket API](https://www.assemblyai.com/docs/streaming/api-spec/streaming-websocket).
+
 
 ## Use your ChatGPT plan for text polishing
 

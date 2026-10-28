@@ -14,11 +14,12 @@ use parking_lot::{Mutex, RwLock};
 
 use crate::asr::tencent_cloud::TencentCloudASRError;
 use crate::asr::{
-    BailianCredentials, BailianRealtimeASR, DashScopeMultimodalASR, DictionaryHotword,
-    ElevenLabsBatchASR, GeminiBatchASR, MimoBatchASR, Qwen3RealtimeASR, Qwen3RealtimeCredentials,
-    SonioxCredentials, SonioxStreamingASR, StepfunRealtimeASR, StepfunRealtimeCredentials,
-    TencentCloudCredentials, TencentCloudStreamingASR, VolcengineCredentials,
-    VolcengineStreamingASR, WhisperBatchASR, XfyunCredentials, XfyunStreamingASR,
+    AssemblyAiCredentials, AssemblyAiStreamingASR, BailianCredentials, BailianRealtimeASR,
+    DashScopeMultimodalASR, DictionaryHotword, ElevenLabsBatchASR, GeminiBatchASR, MimoBatchASR,
+    Qwen3RealtimeASR, Qwen3RealtimeCredentials, SonioxCredentials, SonioxStreamingASR,
+    StepfunRealtimeASR, StepfunRealtimeCredentials, TencentCloudCredentials,
+    TencentCloudStreamingASR, VolcengineCredentials, VolcengineStreamingASR, WhisperBatchASR,
+    XfyunCredentials, XfyunStreamingASR,
 };
 use crate::config::{TaskSpawner, TokioTaskSpawner};
 use crate::credentials::{
@@ -50,6 +51,7 @@ use crate::types::SessionId;
 pub const SHARED_CLOUD_ASR_PROVIDER_TYPES: &[&str] = &[
     "volcengine",
     "soniox",
+    "assemblyai",
     "elevenlabs",
     "bailian",
     "bailian-qwen3-realtime",
@@ -200,6 +202,7 @@ enum CloudTranscriptionSessionKind {
     GeminiLive(Arc<crate::asr::gemini_live::GeminiLiveASR>),
     Bailian(Arc<BailianRealtimeASR>),
     Soniox(Arc<SonioxStreamingASR>),
+    AssemblyAi(Arc<AssemblyAiStreamingASR>),
     QwenRealtime(Arc<Qwen3RealtimeASR>),
     StepfunRealtime(Arc<StepfunRealtimeASR>),
     Xfyun(Arc<XfyunStreamingASR>),
@@ -255,6 +258,7 @@ impl AudioConsumer for CloudTranscriptionSession {
             CloudTranscriptionSessionKind::Gemini(provider) => provider.consume_pcm_chunk(pcm),
             CloudTranscriptionSessionKind::GeminiLive(provider) => provider.consume_pcm_chunk(pcm),
             CloudTranscriptionSessionKind::Bailian(provider) => provider.consume_pcm_chunk(pcm),
+            CloudTranscriptionSessionKind::AssemblyAi(provider) => provider.consume_pcm_chunk(pcm),
             CloudTranscriptionSessionKind::Soniox(provider) => provider.consume_pcm_chunk(pcm),
             CloudTranscriptionSessionKind::QwenRealtime(provider) => {
                 provider.consume_pcm_chunk(pcm)
@@ -343,6 +347,10 @@ impl TranscriptionSession for CloudTranscriptionSession {
                     timeout_transcription(Duration::from_secs(120), provider.await_final_result())
                         .await?
                 }
+                CloudTranscriptionSessionKind::AssemblyAi(provider) => {
+                    provider.send_last_frame().await.map_err(map_asr_error)?;
+                    provider.await_final_result().await.map_err(map_asr_error)?
+                }
                 CloudTranscriptionSessionKind::Soniox(provider) => {
                     provider.send_last_frame().await.map_err(map_asr_error)?;
                     timeout_transcription(Duration::from_secs(120), provider.await_final_result())
@@ -397,6 +405,7 @@ impl TranscriptionSession for CloudTranscriptionSession {
             CloudTranscriptionSessionKind::ElevenLabs(provider) => provider.cancel(),
             CloudTranscriptionSessionKind::GeminiLive(provider) => provider.cancel(),
             CloudTranscriptionSessionKind::Bailian(provider) => provider.cancel(),
+            CloudTranscriptionSessionKind::AssemblyAi(provider) => provider.cancel(),
             CloudTranscriptionSessionKind::Soniox(provider) => provider.cancel(),
             CloudTranscriptionSessionKind::QwenRealtime(provider) => provider.cancel(),
             CloudTranscriptionSessionKind::StepfunRealtime(provider) => provider.cancel(),
@@ -546,6 +555,7 @@ fn validate_cloud_transcription_preparation(
 
     match preparation.kind {
         ActiveAsrProviderKind::Bailian
+        | ActiveAsrProviderKind::AssemblyAi
         | ActiveAsrProviderKind::Soniox
         | ActiveAsrProviderKind::Qwen3Realtime
         | ActiveAsrProviderKind::StepfunRealtime
@@ -637,6 +647,25 @@ async fn build_cloud_transcription_session(
     let endpoint = preparation.endpoint.clone();
     let context = &preparation.context;
     let (kind, label_model) = match preparation.kind {
+        ActiveAsrProviderKind::AssemblyAi => {
+            let credentials = AssemblyAiCredentials {
+                api_key,
+                endpoint,
+                model,
+                terms: context.polish.hotwords.clone(),
+            };
+            let effective_model = credentials.normalized_model().to_string();
+            let provider = Arc::new(AssemblyAiStreamingASR::with_task_spawner(
+                credentials,
+                Arc::clone(&task_spawner),
+            ));
+            provider.set_partial_sink(Arc::clone(&partials));
+            provider.open_session().await.map_err(map_asr_error)?;
+            (
+                CloudTranscriptionSessionKind::AssemblyAi(provider),
+                Some(effective_model),
+            )
+        }
         ActiveAsrProviderKind::Soniox => {
             let effective_model = non_blank_owned(model)
                 .unwrap_or_else(|| crate::asr::soniox::DEFAULT_MODEL.to_string());
@@ -3387,6 +3416,7 @@ mod tests {
         for (provider, accounts) in [
             ("whisper", vec![ASR_API_KEY_ACCOUNT]),
             ("bailian", vec![ASR_API_KEY_ACCOUNT]),
+            ("assemblyai", vec![ASR_API_KEY_ACCOUNT]),
             (
                 "volcengine",
                 vec![VOLCENGINE_APP_KEY_ACCOUNT, VOLCENGINE_ACCESS_KEY_ACCOUNT],

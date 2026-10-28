@@ -1,5 +1,6 @@
 //! Cross-platform ASR protocol implementations shared by every host.
 
+pub mod assemblyai;
 pub mod bailian;
 pub mod dashscope_multimodal;
 pub mod elevenlabs;
@@ -18,6 +19,7 @@ pub mod whisper;
 pub mod xfyun;
 
 pub use crate::ports::AudioConsumer;
+pub use assemblyai::{AssemblyAiCredentials, AssemblyAiStreamingASR};
 pub use bailian::{BailianCredentials, BailianRealtimeASR};
 pub use dashscope_multimodal::DashScopeMultimodalASR;
 pub use elevenlabs::ElevenLabsBatchASR;

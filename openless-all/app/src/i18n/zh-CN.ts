@@ -1756,6 +1756,7 @@ export const zhCN = {
         custom: '自定义',
         asrVolcengine: '火山引擎 bigasr',
         asrSoniox: 'Soniox 实时 ASR',
+        asrAssemblyAi: 'AssemblyAI 实时 ASR',
         asrBailian: '阿里云百炼实时 ASR',
         asrBailianQwen3: '阿里云百炼 Qwen3 实时 ASR',
         asrBailianFunAsrFlash: '阿里云百炼 Fun-ASR-Flash（录音文件）',

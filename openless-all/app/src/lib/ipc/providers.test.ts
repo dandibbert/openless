@@ -2,6 +2,21 @@ import { listProviderDescriptors, type ProviderKind } from './providers';
 import generated from './provider-descriptors.generated.json';
 
 const preview = generated.llm.find((descriptor) => descriptor.providerType === 'lmstudio');
+const assemblyAi = (await listProviderDescriptors('asr')).find(
+  (descriptor) => descriptor.providerType === 'assemblyai',
+);
+const assemblyAiPreview = generated.asr.find(
+  (descriptor) => descriptor.providerType === 'assemblyai',
+);
+if (
+  !assemblyAi ||
+  !assemblyAiPreview ||
+  assemblyAi.defaultEndpoint !== 'wss://streaming.assemblyai.com/v3/ws' ||
+  assemblyAi.defaultModel !== 'universal-3-6-pro' ||
+  assemblyAi.authRequirement !== 'api_key' ||
+  JSON.stringify(assemblyAi.staticModels) !== JSON.stringify(assemblyAiPreview.staticModels)
+)
+  throw new Error('AssemblyAI must expose consistent streaming defaults in browser catalogs');
 const lmstudio = (await listProviderDescriptors('llm')).find(
   (descriptor) => descriptor.providerType === 'lmstudio',
 );

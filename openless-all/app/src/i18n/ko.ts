@@ -1824,6 +1824,7 @@ export const ko: typeof zhCN = {
         custom: '사용자 정의',
         asrVolcengine: 'Volcengine bigasr',
         asrSoniox: 'Soniox 실시간 ASR',
+        asrAssemblyAi: 'AssemblyAI 실시간 ASR',
         asrBailian: 'Alibaba Bailian 실시간 ASR',
         asrBailianQwen3: 'Bailian Qwen3 실시간 ASR',
         asrBailianFunAsrFlash: 'Bailian Fun-ASR-Flash (녹음 파일)',

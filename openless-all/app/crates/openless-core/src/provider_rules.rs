@@ -15,6 +15,7 @@ pub const OPENAI_COMPATIBLE_ASR_PROVIDER_ID: &str = "openai-compatible";
 pub const ZENMUX_ASR_PROVIDER_ID: &str = "zenmux";
 
 const BAILIAN_PROVIDER_ID: &str = "bailian";
+const ASSEMBLYAI_PROVIDER_ID: &str = "assemblyai";
 const SONIOX_PROVIDER_ID: &str = "soniox";
 const QWEN3_REALTIME_PROVIDER_ID: &str = "bailian-qwen3-realtime";
 const STEPFUN_REALTIME_PROVIDER_ID: &str = "stepfun-realtime";
@@ -28,6 +29,7 @@ const GEMINI_PROVIDER_ID: &str = "gemini";
 const ASR_PROVIDER_TYPES: &[(&str, &str)] = &[
     ("volcengine", "asrVolcengine"),
     (SONIOX_PROVIDER_ID, "asrSoniox"),
+    (ASSEMBLYAI_PROVIDER_ID, "asrAssemblyAi"),
     ("elevenlabs", "asrElevenLabs"),
     ("bailian", "asrBailian"),
     ("bailian-qwen3-realtime", "asrBailianQwen3"),
@@ -375,6 +377,7 @@ fn static_models(kind: ProviderKind, provider_type: &str) -> &'static [&'static 
         (ProviderKind::Asr, "xiaomi-mimo-asr") => &[crate::asr::mimo::DEFAULT_MODEL],
         (ProviderKind::Asr, "bailian-fun-asr-flash") => DASHSCOPE_MODELS,
         (ProviderKind::Asr, "gemini") => GEMINI_MODELS,
+        (ProviderKind::Asr, ASSEMBLYAI_PROVIDER_ID) => crate::asr::assemblyai::MODELS,
         (ProviderKind::Asr, "elevenlabs") => &[crate::asr::elevenlabs::DEFAULT_MODEL],
         (ProviderKind::Asr, "minimax") => &["asr-1.0"],
         (ProviderKind::Llm, crate::polish::CODEX_OAUTH_PROVIDER_ID) => &[
@@ -398,6 +401,7 @@ const DASHSCOPE_ASYNC_DEFAULT_ENDPOINT: &str =
 pub enum ActiveAsrProviderKind {
     Bailian,
     Soniox,
+    AssemblyAi,
     Qwen3Realtime,
     StepfunRealtime,
     Mimo,
@@ -577,6 +581,7 @@ pub fn equivalent_endpoint(left: &str, right: &str) -> bool {
 
 pub fn default_asr_endpoint(provider_type: &str) -> Option<&'static str> {
     match provider_type {
+        ASSEMBLYAI_PROVIDER_ID => Some(crate::asr::assemblyai::DEFAULT_ENDPOINT),
         SONIOX_PROVIDER_ID => Some(crate::asr::soniox::DEFAULT_ENDPOINT),
         "elevenlabs" => Some("https://api.elevenlabs.io/v1"),
         "bailian" => Some(BAILIAN_DEFAULT_ENDPOINT),
@@ -603,6 +608,7 @@ pub fn default_asr_model(provider_type: &str) -> Option<&'static str> {
         return Some(model.model_id());
     }
     match provider_type {
+        ASSEMBLYAI_PROVIDER_ID => Some(crate::asr::assemblyai::DEFAULT_MODEL),
         SONIOX_PROVIDER_ID => Some(crate::asr::soniox::DEFAULT_MODEL),
         "elevenlabs" => Some(crate::asr::elevenlabs::DEFAULT_MODEL),
         "bailian" => Some(crate::asr::bailian::DEFAULT_MODEL),
@@ -784,6 +790,7 @@ pub fn parse_extra_headers(value: &str) -> Result<HashMap<String, String>, Backe
 pub fn active_asr_provider_kind(id: &str) -> ActiveAsrProviderKind {
     match id {
         BAILIAN_PROVIDER_ID => ActiveAsrProviderKind::Bailian,
+        ASSEMBLYAI_PROVIDER_ID => ActiveAsrProviderKind::AssemblyAi,
         SONIOX_PROVIDER_ID => ActiveAsrProviderKind::Soniox,
         QWEN3_REALTIME_PROVIDER_ID => ActiveAsrProviderKind::Qwen3Realtime,
         STEPFUN_REALTIME_PROVIDER_ID => ActiveAsrProviderKind::StepfunRealtime,
@@ -1478,6 +1485,32 @@ mod tests {
         assert!(!llm_configured("api-route", &configuration));
         configuration.llm_api_key = true;
         assert!(llm_configured("api-route", &configuration));
+    }
+
+    #[test]
+    fn assemblyai_is_registered_with_streaming_defaults_and_key_auth() {
+        assert!(crate::cloud_providers::SHARED_CLOUD_ASR_PROVIDER_TYPES.contains(&"assemblyai"));
+        let descriptor = provider_descriptor(ProviderKind::Asr, "assemblyai").unwrap();
+        assert_eq!(descriptor.label_key, "asrAssemblyAi");
+        assert_eq!(
+            descriptor.default_endpoint.as_deref(),
+            Some(crate::asr::assemblyai::DEFAULT_ENDPOINT)
+        );
+        assert_eq!(
+            descriptor.default_model.as_deref(),
+            Some(crate::asr::assemblyai::DEFAULT_MODEL)
+        );
+        assert_eq!(descriptor.static_models, crate::asr::assemblyai::MODELS);
+        assert_eq!(descriptor.auth_requirement, AuthRequirement::ApiKey);
+        assert_eq!(descriptor.validation_probe, ValidationProbe::AsrSilence);
+        assert_eq!(
+            active_asr_provider_kind("assemblyai"),
+            ActiveAsrProviderKind::AssemblyAi
+        );
+        let mut configuration = CredentialConfiguration::default();
+        assert!(!asr_configured("assemblyai", &configuration, None));
+        configuration.asr_api_key = true;
+        assert!(asr_configured("assemblyai", &configuration, None));
     }
 
     #[test]

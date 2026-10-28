@@ -406,6 +406,23 @@
   },
   {
     "kind": "asr",
+    "providerType": "assemblyai",
+    "labelKey": "asrAssemblyAi",
+    "defaultEndpoint": "wss://streaming.assemblyai.com/v3/ws",
+    "defaultModel": "universal-3-6-pro",
+    "authRequirement": "api_key",
+    "validationProbe": "asr_silence",
+    "staticModels": [
+      "universal-3-6-pro",
+      "universal-3-5-pro",
+      "universal-streaming-english",
+      "universal-streaming-multilingual"
+    ],
+    "defaultRequestFormat": null,
+    "supportedRequestFormats": []
+  },
+  {
+    "kind": "asr",
     "providerType": "elevenlabs",
     "labelKey": "asrElevenLabs",
     "defaultEndpoint": "https://api.elevenlabs.io/v1",

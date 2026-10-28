@@ -1902,6 +1902,7 @@ export const fr: typeof zhCN = {
         custom: 'Personnalisé',
         asrVolcengine: 'Volcengine bigasr',
         asrSoniox: 'ASR temps réel Soniox',
+        asrAssemblyAi: 'ASR temps réel AssemblyAI',
         asrGemini: 'Google Gemini Transcribe',
         asrTencentCloud: 'ASR temps réel Hunyuan de Tencent Cloud',
         asrBailian: 'Alibaba Bailian ASR en temps réel',
