@@ -12,6 +12,7 @@ pub mod pcm;
 pub mod qwen_realtime;
 pub mod soniox;
 pub mod stepfun_realtime;
+mod streaming;
 pub mod tencent_cloud;
 pub mod volcengine;
 pub mod wav;

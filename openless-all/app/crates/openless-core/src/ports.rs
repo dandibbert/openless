@@ -288,6 +288,8 @@ pub enum EngineProgress {
     RecordingLimitReached,
     RecordingFault(BackendError),
     Notification(crate::types::NotificationPayload),
+    /// A live ASR stream failed while the microphone may still be capturing.
+    TranscriptionFault(BackendError),
     Stage(EngineStage),
     TranscriptDelta(TranscriptDelta),
     PolishDelta(PolishDelta),
@@ -689,6 +691,11 @@ pub struct TextStreamChunk {
 /// every implementation has identical terminal-event semantics.
 pub trait TextStreamSink: Send + Sync {
     fn publish(&self, chunk: TextStreamChunk) -> Result<(), BackendError>;
+
+    /// Report a terminal provider failure immediately, not only on key release.
+    fn fail(&self, _error: BackendError) -> Result<(), BackendError> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

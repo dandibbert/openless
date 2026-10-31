@@ -53,6 +53,7 @@ const REALTIME_PATH: &str = "/realtime/asr/stream";
 /// 100 ms of 16 kHz / 16-bit / mono PCM, matching the recorder output.
 pub const TARGET_AUDIO_CHUNK_BYTES: usize = 3_200;
 const BYTES_PER_MS: u64 = 32;
+#[cfg(test)]
 const FINAL_RESULT_TIMEOUT: Duration = Duration::from_secs(12);
 const SESSION_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -85,9 +86,8 @@ const FINISH_GRACE: Duration = Duration::from_millis(1_200);
 /// repeatedly — a single check that fails leaves no second chance (see the grace task
 /// in `send_last_frame`).
 const FINISH_POLL_INTERVAL: Duration = Duration::from_millis(100);
-/// Hard deadline counted from the tail frame write. Backstop for a server that never
-/// closes the last segment, capping the worst-case wait at this instead of
-/// FINAL_RESULT_TIMEOUT (12s).
+/// Recheck settled segments after this grace deadline. An open segment must
+/// still wait for a completed event or fail at the recording-sized deadline.
 const FINISH_HARD_DEADLINE: Duration = Duration::from_millis(3_000);
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -348,6 +348,9 @@ impl StepfunRealtimeASR {
                     }
                 }
             }
+            if let Some(this) = weak_self.upgrade() {
+                this.finish_error(StepfunASRError::NoFinalResult);
+            }
         }));
 
         let started = self.session_started.notified();
@@ -394,7 +397,10 @@ impl StepfunRealtimeASR {
     /// Pure-silence sessions (no speech_started at all) are covered by the
     /// FINISH_GRACE backstop and return successfully with empty text.
     pub async fn send_last_frame(self: &Arc<Self>) -> Result<(), StepfunASRError> {
-        let result = tokio::time::timeout(FINAL_RESULT_TIMEOUT, async {
+        let bytes = self.state.lock().bytes_received;
+        let timeout =
+            super::streaming::drain_timeout(bytes) + super::streaming::final_timeout(bytes);
+        let result = tokio::time::timeout(timeout, async {
             let finished = self.session_finished.notified();
             tokio::pin!(finished);
             finished.as_mut().enable();
@@ -440,26 +446,9 @@ impl StepfunRealtimeASR {
                 .map_err(StepfunASRError::SendFailed)?;
             self.state.lock().tail_write_pending = false;
 
-            // Grace task: the tail frame is written and the client sends no more audio;
-            // all that remains is waiting for the server to turn the tail audio into
-            // completed events. Once FINISH_GRACE has elapsed with no open segments,
-            // finish.
-            //
-            // Must poll: this used to check once at FINISH_GRACE expiry, and a single
-            // failed check left no second chance — after the tail frame the server may
-            // send no further events at all (when the pause before release already
-            // exceeded the VAD threshold, the last segment's completed arrived before
-            // the tail), so the session idled until FINAL_RESULT_TIMEOUT. Measured at
-            // ~13% of dictations waiting the full 12 seconds this way. (The direct
-            // cause of that 13% was contains_non_silent_pcm treating room tone as
-            // speech, see that function; polling + the hard deadline are the second
-            // line of defense ensuring any finish failure never degrades to 12s again.)
-            //
-            // The finish precondition is still "no open segments, and no unconfirmed
-            // real audio after the last completed" — that guard is correct and must not
-            // be dropped to fix the stall. The real backstop is FINISH_HARD_DEADLINE:
-            // when the server never closes the last segment, worst-case wait is 3s
-            // instead of idling until FINAL_RESULT_TIMEOUT.
+            // Poll after the tail write: a completed event may have arrived before
+            // Stop. Only settled audio can finish; an open/interim segment must
+            // wait for the server or fail at the recording-sized deadline.
             let weak = Arc::downgrade(self);
             let task_spawner = Arc::clone(&self.task_spawner);
             task_spawner.spawn(Box::pin(async move {
@@ -506,14 +495,10 @@ impl StepfunRealtimeASR {
         match result {
             Ok(inner) => inner,
             Err(_) => {
-                // Timeout backstop: return the partial result if one exists, error
-                // otherwise — same as the disconnect path. Reaching here means the
-                // grace task above failed to finish (it has its own FINISH_HARD_DEADLINE
-                // backstop and normally should not get here), and the user has already
-                // waited the full 12 seconds — this must be logged.
+                // Do not pass a truncated transcript to polish/insertion on timeout.
                 log::warn!(
-                    "[stepfun-asr] finish stalled for {:?}, falling back to partial transcript",
-                    FINAL_RESULT_TIMEOUT
+                    "[stepfun-asr] finish stalled for {:?}; transcript is incomplete",
+                    timeout
                 );
                 self.finish_with_partial_or_error(StepfunASRError::FinalResultTimeout);
                 Ok(())
@@ -526,7 +511,8 @@ impl StepfunRealtimeASR {
         let Some(rx) = rx else {
             return Err(StepfunASRError::NoFinalResult);
         };
-        tokio::time::timeout(FINAL_RESULT_TIMEOUT, rx)
+        let timeout = super::streaming::final_timeout(self.state.lock().bytes_received);
+        tokio::time::timeout(timeout, rx)
             .await
             .map_err(|_| StepfunASRError::FinalResultTimeout)?
             .map_err(|_| StepfunASRError::NoFinalResult)?
@@ -748,17 +734,8 @@ impl StepfunRealtimeASR {
     }
 
     fn finish_with_partial_or_error(&self, error: StepfunASRError) {
-        let has_result = {
-            let st = self.state.lock();
-            has_transcript(&st)
-        };
-        if has_result {
-            // Consistent with Bailian / Qwen / Volcengine: on error with an existing
-            // result, fall back to returning it.
-            self.finish_success();
-        } else {
-            self.finish_error(error);
-        }
+        // Retain drafts through the sink, never disguise a failed stream as complete.
+        self.finish_error(error);
     }
 
     fn finish_error(&self, error: StepfunASRError) {
@@ -772,6 +749,12 @@ impl StepfunRealtimeASR {
             st.send_tx.take();
             st.final_tx.take()
         };
+        if let Some(sink) = self.partial_sink.lock().clone() {
+            let _ = sink.fail(crate::BackendError::new(
+                crate::BackendErrorCode::Provider,
+                format!("ASR stream interrupted: {error}"),
+            ));
+        }
         if let Some(tx) = tx {
             let _ = tx.send(Err(error));
         }
@@ -798,6 +781,9 @@ impl AudioConsumer for StepfunRealtimeASR {
         }
         let (send_tx, chunks) = {
             let mut st = self.state.lock();
+            if st.session_finished {
+                return;
+            }
             st.bytes_received = st.bytes_received.saturating_add(pcm.len() as u64);
             if !st.session_started {
                 st.pending_audio.extend_from_slice(pcm);
@@ -820,11 +806,7 @@ impl AudioConsumer for StepfunRealtimeASR {
 }
 
 fn drain_audio_chunks(buffer: &mut Vec<u8>) -> Vec<Vec<u8>> {
-    let mut chunks = Vec::new();
-    while buffer.len() >= TARGET_AUDIO_CHUNK_BYTES {
-        chunks.push(buffer.drain(..TARGET_AUDIO_CHUNK_BYTES).collect());
-    }
-    chunks
+    super::streaming::drain_chunks(buffer, TARGET_AUDIO_CHUNK_BYTES)
 }
 
 /// A sample counts as "voiced" only above ~1% of full-scale amplitude.
@@ -851,22 +833,9 @@ fn contains_non_silent_pcm(pcm: &[u8]) -> bool {
         == NON_SILENT_MIN_SAMPLES
 }
 
-fn has_transcript(state: &SyncState) -> bool {
-    !state.completed_segments.is_empty() || !state.partial_text.trim().is_empty()
-}
-
-/// At the hard deadline, finish only if there is current-segment text to return, or
-/// no audio remains unsettled.
-///
-/// If the server confirmed a speech segment started but emitted no transcript yet,
-/// keep waiting until FINAL_RESULT_TIMEOUT so a late completed can arrive; after the
-/// timeout `finish_with_partial_or_error` returns an explicit error rather than
-/// silently succeeding with empty text.
+/// Even after the grace deadline, interim text cannot prove audio completion.
 fn should_force_finish_at_hard_deadline(state: &SyncState) -> bool {
-    if state.open_segments > 0 {
-        return !state.partial_text.trim().is_empty();
-    }
-    !has_audio_after_last_completed(state)
+    state.open_segments == 0 && !has_audio_after_last_completed(state)
 }
 
 fn has_audio_after_last_completed(state: &SyncState) -> bool {
@@ -1164,7 +1133,7 @@ mod tests {
     }
 
     #[test]
-    fn stepfun_request_error_event_returns_partial_when_available() {
+    fn stepfun_request_error_event_rejects_partial_success() {
         let asr = create_test_asr();
         asr.handle_text_message(&speech_started_event());
         asr.handle_text_message(&completed_event("已识别内容。"));
@@ -1174,7 +1143,9 @@ mod tests {
             &json!({"type": "transcript.response.error", "error": {"message": "boom"}}).to_string(),
         );
         assert!(!keep_going);
-        assert_eq!(rx.try_recv().unwrap().unwrap().text, "已识别内容。");
+        assert!(
+            matches!(rx.try_recv().unwrap(), Err(StepfunASRError::TaskFailed(message)) if message == "boom")
+        );
     }
 
     #[test]
@@ -1199,7 +1170,7 @@ mod tests {
         assert!(!should_force_finish_at_hard_deadline(&state));
 
         state.partial_text = "interim".to_string();
-        assert!(should_force_finish_at_hard_deadline(&state));
+        assert!(!should_force_finish_at_hard_deadline(&state));
 
         state.partial_text.clear();
         state.open_segments = 0;
@@ -1474,11 +1445,9 @@ mod tests {
         );
     }
 
-    /// Regression: the server never closes the last segment (only speech_started +
-    /// delta, no completed). The hard deadline must bound the wait instead of
-    /// degrading to 12 seconds.
+    /// An interim tail cannot be promoted to success at a local grace deadline.
     #[tokio::test]
-    async fn hard_deadline_bounds_the_wait_when_segment_never_closes() {
+    async fn hard_deadline_does_not_disguise_an_unfinished_segment_as_success() {
         let endpoint = spawn_fake_gateway(vec![
             speech_started_event(),
             delta_event("这句话没有收到 completed", ""),
@@ -1494,23 +1463,14 @@ mod tests {
         asr.open_session().await.unwrap();
         asr.consume_pcm_chunk(&speech_pcm(TARGET_AUDIO_CHUNK_BYTES));
 
-        let started = Instant::now();
-        tokio::time::timeout(FINAL_RESULT_TIMEOUT, asr.send_last_frame())
-            .await
-            .expect("hard deadline must fire well before the final-result timeout")
-            .unwrap();
-        let elapsed = started.elapsed();
-
         assert!(
-            elapsed >= FINISH_HARD_DEADLINE && elapsed < FINISH_HARD_DEADLINE * 2,
-            "should settle at the hard deadline, took {elapsed:?}"
+            tokio::time::timeout(FINISH_HARD_DEADLINE * 2, asr.send_last_frame())
+                .await
+                .is_err()
         );
-        // The un-completed interim tail is still returned; a finish timeout must not
-        // drop text.
-        assert_eq!(
-            asr.await_final_result().await.unwrap().text,
-            "这句话没有收到 completed"
-        );
+        assert!(!asr.state.lock().session_finished);
+        asr.cancel();
+        assert!(asr.await_final_result().await.is_err());
     }
 
     // When the server accepts TCP but never completes the WebSocket handshake

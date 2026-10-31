@@ -46,7 +46,6 @@ pub const DEFAULT_ENDPOINT: &str = "wss://rtasr.xfyun.cn/v1/ws";
 pub const TARGET_AUDIO_CHUNK_BYTES: usize = 1_280;
 /// 16 kHz / 16-bit / mono = 32000 bytes/sec -> 32 bytes/ms.
 const BYTES_PER_MS: u64 = 32;
-const FINAL_RESULT_TIMEOUT: Duration = Duration::from_secs(12);
 /// Cap on the WebSocket handshake (TCP + TLS + HTTP upgrade) so a poor network cannot
 /// hang the hotkey thread.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -99,6 +98,7 @@ pub enum XfyunASRError {
 
 #[derive(Default)]
 struct SyncState {
+    end_sent: bool,
     pending_audio: Vec<u8>,
     bytes_sent: u64,
     started: bool,
@@ -207,10 +207,22 @@ impl XfyunStreamingASR {
         let pending_for_worker = Arc::clone(&self.pending_sends);
         let notify_for_worker = Arc::clone(&self.send_done);
         let task_spawner = Arc::clone(&self.task_spawner);
+        let weak_for_worker = Arc::downgrade(self);
         task_spawner.spawn(Box::pin(async move {
+            let mut next_send = None;
             while let Some(chunk) = audio_rx.recv().await {
+                super::streaming::pace_audio(&mut next_send, chunk.len()).await;
+                if weak_for_worker
+                    .upgrade()
+                    .is_none_or(|this| this.state.lock().finished)
+                {
+                    break;
+                }
                 if let Err(e) = send_binary(&writer_for_worker, chunk).await {
-                    log::error!("[xfyun-asr] audio frame send failed: {e}");
+                    if let Some(this) = weak_for_worker.upgrade() {
+                        this.finish_error(e);
+                    }
+                    break;
                 }
                 if pending_for_worker.fetch_sub(1, Ordering::SeqCst) == 1 {
                     notify_for_worker.notify_waiters();
@@ -250,6 +262,9 @@ impl XfyunStreamingASR {
                     }
                 }
             }
+            if let Some(this) = weak_self.upgrade() {
+                this.finish_on_close();
+            }
         }));
 
         // Wait for the handshake result: auth errors / rejected connections fail fast
@@ -277,19 +292,26 @@ impl XfyunStreamingASR {
     }
 
     pub async fn send_last_frame(&self) -> Result<(), XfyunASRError> {
-        // Wait for all in-flight audio frames, then send `{"end": true}` (800ms cap
-        // avoids waiting forever on an extreme network).
-        let drain_deadline = Instant::now() + Duration::from_millis(800);
+        // Never let end-of-audio overtake queued replay frames.
+        let drain_deadline =
+            Instant::now() + super::streaming::drain_timeout(self.state.lock().bytes_sent as u64);
         while self.pending_sends.load(Ordering::SeqCst) > 0 {
+            if self.state.lock().finished {
+                return Err(XfyunASRError::NoFinalResult);
+            }
             let remaining = drain_deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 log::warn!(
-                    "[xfyun-asr] send_last_frame: pending {} 帧未发送完，超时强制继续",
+                    "[xfyun-asr] send_last_frame: pending {} 帧未发送完，超时中止，保留录音",
                     self.pending_sends.load(Ordering::SeqCst)
                 );
-                break;
+                return Err(XfyunASRError::FinalResultTimeout);
             }
-            let _ = tokio::time::timeout(remaining, self.send_done.notified()).await;
+            let _ = tokio::time::timeout(
+                remaining.min(Duration::from_millis(100)),
+                self.send_done.notified(),
+            )
+            .await;
         }
 
         // Flush the tail audio shorter than one chunk.
@@ -315,24 +337,34 @@ impl XfyunStreamingASR {
 
         // Wait for the tail audio to be sent too, then send the end marker (contents
         // per the docs; must be a binary message).
-        let drain_deadline = Instant::now() + Duration::from_millis(800);
+        let drain_deadline =
+            Instant::now() + super::streaming::drain_timeout(self.state.lock().bytes_sent as u64);
         while self.pending_sends.load(Ordering::SeqCst) > 0 {
+            if self.state.lock().finished {
+                return Err(XfyunASRError::NoFinalResult);
+            }
             let remaining = drain_deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 log::warn!(
-                    "[xfyun-asr] send_last_frame: tail {} 帧未发送完，超时强制结束",
+                    "[xfyun-asr] send_last_frame: tail {} 帧未发送完，超时中止，保留录音",
                     self.pending_sends.load(Ordering::SeqCst)
                 );
-                break;
+                return Err(XfyunASRError::FinalResultTimeout);
             }
-            let _ = tokio::time::timeout(remaining, self.send_done.notified()).await;
+            let _ = tokio::time::timeout(
+                remaining.min(Duration::from_millis(100)),
+                self.send_done.notified(),
+            )
+            .await;
         }
 
+        self.state.lock().end_sent = true;
         send_binary(&self.writer, br#"{"end": true}"#.to_vec()).await
     }
 
     pub async fn await_final_result(&self) -> Result<RawTranscript, XfyunASRError> {
-        self.await_final_result_with_timeout(FINAL_RESULT_TIMEOUT)
+        let bytes = self.state.lock().bytes_sent as u64;
+        self.await_final_result_with_timeout(super::streaming::final_timeout(bytes))
             .await
     }
 
@@ -359,6 +391,7 @@ impl XfyunStreamingASR {
     }
 
     pub fn cancel(&self) {
+        self.partial_sink.lock().take();
         self.state.lock().pending_audio.clear();
         // Release the handshake channel: if open_session is still waiting for started,
         // it immediately receives Err and returns.
@@ -498,22 +531,20 @@ impl XfyunStreamingASR {
             )));
             return;
         }
-        self.finish_with_partial_or_error(XfyunASRError::NoFinalResult);
+        let end_sent = self.state.lock().end_sent;
+        if end_sent && self.pending_sends.load(Ordering::SeqCst) == 0 {
+            self.finish_success();
+        } else {
+            self.finish_error(XfyunASRError::NoFinalResult);
+        }
     }
 
     /// If any recognized content (final or interim) exists, return it as a fallback;
     /// otherwise error — consistent with the Volcengine / Bailian policy of "not
     /// losing recognized text when the server disconnects before final".
     fn finish_with_partial_or_error(&self, error: XfyunASRError) {
-        let has_partial = {
-            let st = self.state.lock();
-            !st.last_result_text.trim().is_empty() || !st.partial_segments.is_empty()
-        };
-        if has_partial {
-            self.finish_success();
-        } else {
-            self.finish_error(error);
-        }
+        // Retain drafts through the sink, never disguise a failed stream as complete.
+        self.finish_error(error);
     }
 
     fn finish_success(&self) {
@@ -556,6 +587,12 @@ impl XfyunStreamingASR {
             st.final_tx.take()
         };
         *self.audio_tx.lock() = None;
+        if let Some(sink) = self.partial_sink.lock().clone() {
+            let _ = sink.fail(crate::BackendError::new(
+                crate::BackendErrorCode::Provider,
+                format!("ASR stream interrupted: {error}"),
+            ));
+        }
         if let Some(tx) = tx {
             let _ = tx.send(Err(error));
         }
@@ -593,12 +630,9 @@ impl AudioConsumer for XfyunStreamingASR {
                 return;
             }
             st.pending_audio.extend_from_slice(pcm);
-            let mut out = Vec::new();
-            while st.pending_audio.len() >= TARGET_AUDIO_CHUNK_BYTES {
-                let chunk: Vec<u8> = st.pending_audio.drain(..TARGET_AUDIO_CHUNK_BYTES).collect();
-                st.bytes_sent += chunk.len() as u64;
-                out.push(chunk);
-            }
+            let out =
+                super::streaming::drain_chunks(&mut st.pending_audio, TARGET_AUDIO_CHUNK_BYTES);
+            st.bytes_sent += out.iter().map(|chunk| chunk.len() as u64).sum::<u64>();
             out
         };
         if chunks.is_empty() {
@@ -623,15 +657,19 @@ impl AudioConsumer for XfyunStreamingASR {
 }
 
 async fn send_binary(writer: &SharedWriter, data: Vec<u8>) -> Result<(), XfyunASRError> {
-    let mut guard = writer.lock().await;
-    let Some(ws) = guard.as_mut() else {
-        return Err(XfyunASRError::ConnectionFailed(
-            "websocket not open".to_string(),
-        ));
-    };
-    ws.send(Message::Binary(data.into()))
-        .await
-        .map_err(|e| XfyunASRError::ConnectionFailed(e.to_string()))
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let mut guard = writer.lock().await;
+        let Some(ws) = guard.as_mut() else {
+            return Err(XfyunASRError::ConnectionFailed(
+                "websocket not open".to_string(),
+            ));
+        };
+        ws.send(Message::Binary(data.into()))
+            .await
+            .map_err(|e| XfyunASRError::ConnectionFailed(e.to_string()))
+    })
+    .await
+    .map_err(|_| XfyunASRError::ConnectionFailed("socket write timed out".into()))?
 }
 
 fn connect_url(credentials: &XfyunCredentials) -> String {
@@ -705,6 +743,25 @@ fn classify_server_error(code: &str, desc: &str) -> XfyunASRError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn early_close_fails_but_documented_post_end_close_completes() {
+        for end_sent in [false, true] {
+            let asr = XfyunStreamingASR::new(XfyunCredentials {
+                app_id: "test".into(),
+                api_key: "test".into(),
+            });
+            let (tx, rx) = oneshot::channel();
+            {
+                let mut state = asr.state.lock();
+                state.final_tx = Some(tx);
+                state.last_result_text = "recognized text".into();
+                state.end_sent = end_sent;
+            }
+            asr.finish_on_close();
+            assert_eq!(rx.await.unwrap().is_ok(), end_sent);
+        }
+    }
 
     #[test]
     fn transcript_snapshots_keep_prefix_and_recognition_corrections() {

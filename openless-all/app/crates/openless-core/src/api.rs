@@ -2437,6 +2437,43 @@ impl EngineProgressSink for BackendEngineProgress {
                 );
                 self.phase_changed.notify_waiters();
             }
+            EngineProgress::TranscriptionFault(error) => {
+                let mut state = self.state.write().expect("backend state lock poisoned");
+                ensure_active_session(&state, session_id)?;
+                // A failure after Stop belongs to the normal finalization error
+                // path. Never stop a later session or resurrect a finished one.
+                if !matches!(
+                    state.dictation.phase,
+                    DictationPhase::Starting | DictationPhase::Recording
+                ) {
+                    return Ok(());
+                }
+                let message = format!("Speech recognition disconnected; stopping recording. The transcript is incomplete. {}", error.message);
+                state.dictation.message = Some(message.clone());
+                self.events.publish(
+                    Some(session_id),
+                    BackendEventKind::DictationStateChanged(state.dictation.clone()),
+                );
+                drop(state);
+                self.events.publish(
+                    Some(session_id),
+                    BackendEventKind::Notification(crate::types::NotificationPayload {
+                        level: crate::types::NotificationLevel::Error,
+                        message,
+                    }),
+                );
+                // Use Stop, not Cancel: finalization retains the failed audio
+                // archive and draft instead of discarding the user's recording.
+                self.events.publish(
+                    Some(session_id),
+                    BackendEventKind::RecordingControlRequested(
+                        crate::events::RecordingControlRequest {
+                            session_id,
+                            action: crate::events::RecordingControlAction::Stop,
+                        },
+                    ),
+                );
+            }
             EngineProgress::Notification(notification) => {
                 let state = self.state.read().expect("backend state lock poisoned");
                 ensure_active_session(&state, session_id)?;
@@ -14658,6 +14695,124 @@ mod tests {
         );
         backend.cancel_dictation(None).await.unwrap();
         backend.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn disconnected_asr_stop_preserves_draft_and_audio_without_polishing_or_inserting() {
+        let data_dir = TestDataDir::new("asr-disconnect-retention");
+        let polisher = Arc::new(crate::testing::FixtureTextPolisher::successful(
+            "must not polish partial",
+        ));
+        let inserter = Arc::new(crate::testing::FixtureTextInserter::with_outcome(
+            InsertOutcome::Inserted,
+        ));
+        let engine = crate::PipelineDictationEngine::new(
+            Arc::new(crate::ExternalAudioRecorder::with_recordings_directory(
+                data_dir.path().join("recordings"),
+            )),
+            Arc::new(crate::testing::FixtureTranscriptionEngine::failing(
+                crate::asr::soniox::SonioxASRError::NoFinalResult.backend_error(),
+            )),
+            polisher.clone(),
+        );
+        let backend = OpenLessBackend::new(
+            BackendConfig {
+                data_dir: data_dir.path().to_path_buf(),
+                ..Default::default()
+            },
+            BackendDependencies {
+                dictation_engine: Arc::new(engine),
+                text_inserter: inserter.clone(),
+                credential_store: llm_configured_credentials(),
+                task_spawner: Arc::new(TokioTaskSpawner),
+                ..BackendDependencies::unsupported()
+            },
+        )
+        .unwrap();
+        backend.start().await.unwrap();
+        let id = backend.start_external_dictation().await.unwrap();
+        let pcm = vec![1, 0, 2, 0];
+        backend.feed_external_pcm(id, &pcm).unwrap();
+        let progress = backend.engine_progress_sink();
+        progress
+            .publish(
+                id,
+                EngineProgress::TranscriptDelta(crate::TranscriptDelta {
+                    text: "unfinished draft".into(),
+                    offset: 0,
+                    is_final: false,
+                }),
+            )
+            .unwrap();
+        progress
+            .publish(
+                id,
+                EngineProgress::TranscriptionFault(
+                    crate::asr::soniox::SonioxASRError::NoFinalResult.backend_error(),
+                ),
+            )
+            .unwrap();
+        // Hosts handle RecordingControlRequested::Stop with this exact method.
+        assert!(backend.stop_dictation_session(id).await.is_err());
+        let history = backend.list_history().unwrap();
+        assert_eq!(history.len(), 1);
+        assert!(history[0].error_code.is_some());
+        assert_eq!(history[0].raw_transcript, "unfinished draft");
+        assert!(history[0].final_text.is_empty());
+        assert_eq!(history[0].has_audio_recording, Some(true));
+        let wav =
+            std::fs::read(data_dir.path().join("recordings").join(format!("{id}.wav"))).unwrap();
+        assert_eq!(crate::audio::decode_dictation_wav(&wav).unwrap(), pcm);
+        assert!(polisher.inputs().is_empty());
+        assert!(!inserter.actions().iter().any(|action| matches!(
+            action,
+            crate::testing::FixtureInsertionAction::Insert { .. }
+                | crate::testing::FixtureInsertionAction::Write { .. }
+        )));
+        assert_eq!(backend.snapshot().dictation.phase, DictationPhase::Idle);
+    }
+
+    #[tokio::test]
+    async fn live_transcription_fault_alerts_and_requests_stop_not_cancel() {
+        let (backend, _) = backend();
+        backend.start().await.unwrap();
+        let id = backend.start_dictation().await.unwrap();
+        let mut events = backend.subscribe();
+        backend
+            .engine_progress_sink()
+            .publish(
+                id,
+                EngineProgress::TranscriptionFault(BackendError::new(
+                    BackendErrorCode::Provider,
+                    "Soniox connection lost",
+                )),
+            )
+            .unwrap();
+        let received: Vec<_> = std::iter::from_fn(|| events.try_recv().ok()).collect();
+        assert!(received.iter().any(|event| matches!(&event.kind,
+            BackendEventKind::Notification(notice) if notice.level == crate::NotificationLevel::Error && notice.message.contains("incomplete"))));
+        assert!(received.iter().any(|event| matches!(&event.kind,
+            BackendEventKind::RecordingControlRequested(request) if request.session_id == id && request.action == crate::RecordingControlAction::Stop)));
+        assert!(backend
+            .snapshot()
+            .dictation
+            .message
+            .unwrap()
+            .contains("disconnected"));
+        backend.cancel_dictation(Some(id)).await.unwrap();
+        let next = backend.start_dictation().await.unwrap();
+        assert!(backend
+            .engine_progress_sink()
+            .publish(
+                id,
+                EngineProgress::TranscriptionFault(BackendError::new(
+                    BackendErrorCode::Provider,
+                    "late failure"
+                ))
+            )
+            .is_err());
+        assert_eq!(backend.snapshot().dictation.session_id, Some(next));
+        backend.cancel_dictation(Some(next)).await.unwrap();
     }
 
     #[tokio::test]

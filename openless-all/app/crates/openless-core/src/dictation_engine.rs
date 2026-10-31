@@ -2204,6 +2204,11 @@ struct TranscriptProgressForwarder {
 }
 
 impl TextStreamSink for TranscriptProgressForwarder {
+    fn fail(&self, error: BackendError) -> Result<(), BackendError> {
+        self.progress
+            .publish(self.session_id, EngineProgress::TranscriptionFault(error))
+    }
+
     fn publish(&self, chunk: TextStreamChunk) -> Result<(), BackendError> {
         // 流式转写每来一块就一条；它属于逐事件仪表，走 debug，
         // 否则一次长听写就能把 info 层刷满。
@@ -2339,6 +2344,21 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    #[test]
+    fn live_asr_failure_is_forwarded_without_waiting_for_finalization() {
+        let progress = Arc::new(RecordingProgress::default());
+        let sink = TranscriptProgressForwarder {
+            session_id: SessionId::new(),
+            progress: progress.clone(),
+        };
+        let error = crate::asr::soniox::SonioxASRError::NoFinalResult.backend_error();
+        sink.fail(error.clone()).unwrap();
+        assert_eq!(
+            *progress.events.lock().unwrap(),
+            vec![EngineProgress::TranscriptionFault(error)]
+        );
     }
 
     #[test]

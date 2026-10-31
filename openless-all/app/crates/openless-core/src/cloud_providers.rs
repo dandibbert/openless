@@ -293,9 +293,8 @@ impl TranscriptionSession for CloudTranscriptionSession {
         Box::pin(async move {
             let transcript = match kind {
                 CloudTranscriptionSessionKind::Volcengine(provider) => {
-                    let _ = provider.send_last_frame().await;
-                    timeout_transcription(Duration::from_secs(120), provider.await_final_result())
-                        .await?
+                    provider.send_last_frame().await.map_err(map_asr_error)?;
+                    provider.await_final_result().await.map_err(map_asr_error)?
                 }
                 CloudTranscriptionSessionKind::Whisper(provider) => {
                     let timeout = crate::provider_rules::whisper_transcribe_timeout(
@@ -343,33 +342,34 @@ impl TranscriptionSession for CloudTranscriptionSession {
                     provider.finish().await.map_err(map_asr_error)?
                 }
                 CloudTranscriptionSessionKind::Bailian(provider) => {
-                    let _ = provider.send_last_frame().await;
-                    timeout_transcription(Duration::from_secs(120), provider.await_final_result())
-                        .await?
+                    provider.send_last_frame().await.map_err(map_asr_error)?;
+                    provider.await_final_result().await.map_err(map_asr_error)?
                 }
                 CloudTranscriptionSessionKind::AssemblyAi(provider) => {
                     provider.send_last_frame().await.map_err(map_asr_error)?;
                     provider.await_final_result().await.map_err(map_asr_error)?
                 }
                 CloudTranscriptionSessionKind::Soniox(provider) => {
-                    provider.send_last_frame().await.map_err(map_asr_error)?;
-                    timeout_transcription(Duration::from_secs(120), provider.await_final_result())
-                        .await?
+                    provider
+                        .send_last_frame()
+                        .await
+                        .map_err(|error| error.backend_error())?;
+                    provider
+                        .await_final_result()
+                        .await
+                        .map_err(|error| error.backend_error())?
                 }
                 CloudTranscriptionSessionKind::QwenRealtime(provider) => {
-                    let _ = provider.send_last_frame().await;
-                    timeout_transcription(Duration::from_secs(120), provider.await_final_result())
-                        .await?
+                    provider.send_last_frame().await.map_err(map_asr_error)?;
+                    provider.await_final_result().await.map_err(map_asr_error)?
                 }
                 CloudTranscriptionSessionKind::StepfunRealtime(provider) => {
-                    let _ = provider.send_last_frame().await;
-                    timeout_transcription(Duration::from_secs(120), provider.await_final_result())
-                        .await?
+                    provider.send_last_frame().await.map_err(map_asr_error)?;
+                    provider.await_final_result().await.map_err(map_asr_error)?
                 }
                 CloudTranscriptionSessionKind::Xfyun(provider) => {
-                    let _ = provider.send_last_frame().await;
-                    timeout_transcription(Duration::from_secs(120), provider.await_final_result())
-                        .await?
+                    provider.send_last_frame().await.map_err(map_asr_error)?;
+                    provider.await_final_result().await.map_err(map_asr_error)?
                 }
                 CloudTranscriptionSessionKind::TencentCloud(provider) => {
                     provider
@@ -687,7 +687,11 @@ async fn build_cloud_transcription_session(
                 },
                 Arc::clone(&task_spawner),
             ));
-            provider.open_session().await.map_err(map_asr_error)?;
+            provider.set_partial_sink(Arc::clone(&partials));
+            provider
+                .open_session()
+                .await
+                .map_err(|error| error.backend_error())?;
             (
                 CloudTranscriptionSessionKind::Soniox(provider),
                 Some(effective_model),

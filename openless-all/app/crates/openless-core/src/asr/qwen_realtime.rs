@@ -47,7 +47,6 @@ pub const DEFAULT_MODEL: &str = "qwen3-asr-flash-realtime";
 /// official examples.
 pub const TARGET_AUDIO_CHUNK_BYTES: usize = 3_200;
 const BYTES_PER_MS: u64 = 32;
-const FINAL_RESULT_TIMEOUT: Duration = Duration::from_secs(12);
 const SESSION_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Cap on the WebSocket handshake (TCP + TLS + HTTP upgrade) itself. Without it
@@ -133,6 +132,7 @@ struct SyncState {
     bytes_received: u64,
     session_started: bool,
     session_finished: bool,
+    end_sent: bool,
     session_start_error: Option<String>,
     start: Option<Instant>,
     final_tx: Option<oneshot::Sender<Result<RawTranscript, Qwen3ASRError>>>,
@@ -243,6 +243,9 @@ impl Qwen3RealtimeASR {
                         }
                     }
                     SendItem::Finish(done) => {
+                        if let Some(this) = weak_self_for_worker.upgrade() {
+                            this.state.lock().end_sent = true;
+                        }
                         let result = send_text(&writer_for_worker, finish_session_message())
                             .await
                             .map_err(|e| Qwen3ASRError::SendFailed(e.to_string()));
@@ -284,6 +287,9 @@ impl Qwen3RealtimeASR {
                     }
                 }
             }
+            if let Some(this) = weak_self.upgrade() {
+                this.finish_error(Qwen3ASRError::NoFinalResult);
+            }
         }));
 
         let started = self.session_started.notified();
@@ -319,7 +325,10 @@ impl Qwen3RealtimeASR {
     }
 
     pub async fn send_last_frame(&self) -> Result<(), Qwen3ASRError> {
-        let result = tokio::time::timeout(FINAL_RESULT_TIMEOUT, async {
+        let bytes = self.state.lock().bytes_received;
+        let timeout =
+            super::streaming::drain_timeout(bytes) + super::streaming::final_timeout(bytes);
+        let result = tokio::time::timeout(timeout, async {
             let finished = self.session_finished.notified();
             tokio::pin!(finished);
             finished.as_mut().enable();
@@ -371,7 +380,8 @@ impl Qwen3RealtimeASR {
         let Some(rx) = rx else {
             return Err(Qwen3ASRError::NoFinalResult);
         };
-        tokio::time::timeout(FINAL_RESULT_TIMEOUT, rx)
+        let timeout = super::streaming::final_timeout(self.state.lock().bytes_received);
+        tokio::time::timeout(timeout, rx)
             .await
             .map_err(|_| Qwen3ASRError::FinalResultTimeout)?
             .map_err(|_| Qwen3ASRError::NoFinalResult)?
@@ -431,7 +441,12 @@ impl Qwen3RealtimeASR {
                 false
             }
             "session.finished" => {
-                self.finish_success();
+                let end_sent = self.state.lock().end_sent;
+                if end_sent {
+                    self.finish_success();
+                } else {
+                    self.finish_error(Qwen3ASRError::NoFinalResult);
+                }
                 false
             }
             "error" => {
@@ -576,17 +591,8 @@ impl Qwen3RealtimeASR {
     }
 
     fn finish_with_partial_or_error(&self, error: Qwen3ASRError) {
-        let has_partial = {
-            let st = self.state.lock();
-            !st.completed_segments.is_empty() || !st.partial_text.trim().is_empty()
-        };
-        if has_partial {
-            // Consistent with Bailian / Volcengine: on error with an existing result,
-            // fall back to returning it.
-            self.finish_success();
-        } else {
-            self.finish_error(error);
-        }
+        // Retain drafts through the sink, never disguise a failed stream as complete.
+        self.finish_error(error);
     }
 
     fn finish_error(&self, error: Qwen3ASRError) {
@@ -600,6 +606,12 @@ impl Qwen3RealtimeASR {
             st.send_tx.take();
             st.final_tx.take()
         };
+        if let Some(sink) = self.partial_sink.lock().clone() {
+            let _ = sink.fail(crate::BackendError::new(
+                crate::BackendErrorCode::Provider,
+                format!("ASR stream interrupted: {error}"),
+            ));
+        }
         if let Some(tx) = tx {
             let _ = tx.send(Err(error));
         }
@@ -622,6 +634,9 @@ impl AudioConsumer for Qwen3RealtimeASR {
         }
         let (send_tx, chunks) = {
             let mut st = self.state.lock();
+            if st.session_finished {
+                return;
+            }
             st.bytes_received = st.bytes_received.saturating_add(pcm.len() as u64);
             if !st.session_started {
                 st.pending_audio.extend_from_slice(pcm);
@@ -640,11 +655,7 @@ impl AudioConsumer for Qwen3RealtimeASR {
 }
 
 fn drain_audio_chunks(buffer: &mut Vec<u8>) -> Vec<Vec<u8>> {
-    let mut chunks = Vec::new();
-    while buffer.len() >= TARGET_AUDIO_CHUNK_BYTES {
-        chunks.push(buffer.drain(..TARGET_AUDIO_CHUNK_BYTES).collect());
-    }
-    chunks
+    super::streaming::drain_chunks(buffer, TARGET_AUDIO_CHUNK_BYTES)
 }
 
 /// Joins VAD segments: CJK characters concatenate directly; a space is inserted
@@ -949,13 +960,14 @@ mod tests {
         asr.record_completed(&completed_event("你好。"));
         let (tx, mut rx) = oneshot::channel();
         asr.state.lock().final_tx = Some(tx);
+        asr.state.lock().end_sent = true;
         let keep_going = asr.handle_text_message(&json!({"type": "session.finished"}).to_string());
         assert!(!keep_going);
         assert_eq!(rx.try_recv().unwrap().unwrap().text, "你好。");
     }
 
     #[test]
-    fn error_event_with_partial_returns_partial() {
+    fn error_event_with_partial_returns_error() {
         let asr = create_test_asr();
         asr.record_completed(&completed_event("已识别内容。"));
         let (tx, mut rx) = oneshot::channel();
@@ -964,7 +976,9 @@ mod tests {
             &json!({"type": "error", "error": {"message": "boom"}}).to_string(),
         );
         assert!(!keep_going);
-        assert_eq!(rx.try_recv().unwrap().unwrap().text, "已识别内容。");
+        assert!(
+            matches!(rx.try_recv().unwrap(), Err(Qwen3ASRError::TaskFailed(message)) if message == "boom")
+        );
     }
 
     #[test]
@@ -1029,6 +1043,7 @@ mod tests {
         let asr = create_test_asr();
         let (tx, mut rx) = oneshot::channel();
         asr.state.lock().final_tx = Some(tx);
+        asr.state.lock().end_sent = true;
         asr.handle_text_message(&json!({"type": "session.finished"}).to_string());
         assert_eq!(rx.try_recv().unwrap().unwrap().text, "");
     }

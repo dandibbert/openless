@@ -282,7 +282,11 @@ impl AuxiliaryApi for AuxiliaryService {
                 Arc::clone(&service.task_spawner),
             );
             let result = session.finish().await;
-            guard.disarm();
+            // On Err, keep the guard armed: not every provider closes its
+            // socket itself, and a failed replay must not leak a billable session.
+            if result.is_ok() {
+                guard.disarm();
+            }
             match result {
                 Ok(output) => Ok(RetranscriptionResult {
                     text: output.text,
@@ -546,6 +550,22 @@ mod tests {
         let result = service.retranscribe_pcm(vec![1, 0]).await.unwrap();
 
         assert_eq!(result.text, "仅 ASR");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn failed_retranscription_cancels_provider_instead_of_disarming_cleanup() {
+        let transcription = Arc::new(FixtureTranscriptionEngine::failing(BackendError::new(
+            BackendErrorCode::Provider,
+            "final response timed out",
+        )));
+        let (service, path) = service(
+            Arc::new(FixtureTextPolisher::successful("unused")),
+            transcription.clone(),
+        );
+        assert!(service.retranscribe_pcm(vec![1, 0]).await.is_err());
+        tokio::task::yield_now().await;
+        assert_eq!(transcription.cancel_count(), 1);
         let _ = std::fs::remove_file(path);
     }
 

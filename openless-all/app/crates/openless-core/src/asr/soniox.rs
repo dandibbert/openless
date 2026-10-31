@@ -29,6 +29,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 use crate::config::{TaskSpawner, TokioTaskSpawner};
+use crate::ports::{TextStreamChunk, TextStreamSink};
 
 use super::{AudioConsumer, RawTranscript};
 
@@ -39,7 +40,8 @@ pub const DEFAULT_MODEL: &str = "stt-rt-v5";
 /// 100 ms of 16 kHz / 16-bit / mono PCM.
 pub const TARGET_AUDIO_CHUNK_BYTES: usize = 3_200;
 const BYTES_PER_MS: u64 = 32;
-const FINAL_RESULT_TIMEOUT: Duration = Duration::from_secs(12);
+const IO_TIMEOUT: Duration = Duration::from_secs(5);
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 type WsSink = futures_util::stream::SplitSink<WsStream, Message>;
@@ -91,10 +93,40 @@ pub enum SonioxASRError {
     SendFailed(String),
     #[error("task failed: {0}")]
     TaskFailed(String),
+    #[error("Soniox stream interrupted ({code}, {error_type}): {message}")]
+    Server {
+        code: u64,
+        error_type: String,
+        message: String,
+    },
+    #[error("Soniox stream ended before recording stopped; transcript is incomplete")]
+    UnexpectedFinish,
     #[error("no final result")]
     NoFinalResult,
     #[error("final result timed out")]
     FinalResultTimeout,
+}
+
+impl SonioxASRError {
+    pub fn backend_error(&self) -> crate::BackendError {
+        let retryable = matches!(
+            self,
+            Self::ConnectionFailed(_)
+                | Self::SendFailed(_)
+                | Self::NoFinalResult
+                | Self::FinalResultTimeout
+                | Self::UnexpectedFinish
+                | Self::Server {
+                    code: 408 | 429 | 500..=599,
+                    ..
+                }
+        );
+        crate::BackendError::new(
+            crate::BackendErrorCode::Provider,
+            format!("Soniox ASR failed: {self}"),
+        )
+        .retryable(retryable)
+    }
 }
 
 enum SendItem {
@@ -107,6 +139,7 @@ struct SyncState {
     pending_audio: Vec<u8>,
     audio_scratch: Vec<u8>,
     bytes_received: u64,
+    bytes_written: u64,
     task_started: bool,
     task_finished: bool,
     start: Option<Instant>,
@@ -116,6 +149,8 @@ struct SyncState {
     /// 因此直接追加即可，无需 sentence_id 去重（与 `bailian.rs` 的 BTreeMap 方案有意 diverge）。
     final_text: String,
     config_sent: bool,
+    finish_requested: bool,
+    finish_sent: bool,
 }
 
 pub struct SonioxStreamingASR {
@@ -124,6 +159,7 @@ pub struct SonioxStreamingASR {
     state: ParkingMutex<SyncState>,
     writer: SharedWriter,
     final_rx: ParkingMutex<Option<oneshot::Receiver<Result<RawTranscript, SonioxASRError>>>>,
+    partial_sink: ParkingMutex<Option<Arc<dyn TextStreamSink>>>,
 }
 
 impl SonioxStreamingASR {
@@ -141,7 +177,12 @@ impl SonioxStreamingASR {
             state: ParkingMutex::new(SyncState::default()),
             writer: Arc::new(AsyncMutex::new(None)),
             final_rx: ParkingMutex::new(None),
+            partial_sink: ParkingMutex::new(None),
         }
+    }
+
+    pub fn set_partial_sink(&self, sink: Arc<dyn TextStreamSink>) {
+        *self.partial_sink.lock() = Some(sink);
     }
 
     pub async fn open_session(self: &Arc<Self>) -> Result<(), SonioxASRError> {
@@ -154,8 +195,9 @@ impl SonioxStreamingASR {
             .into_client_request()
             .map_err(|e| SonioxASRError::ConnectionFailed(e.to_string()))?;
 
-        let (ws, _resp) = connect_async(request)
+        let (ws, _resp) = tokio::time::timeout(IO_TIMEOUT, connect_async(request))
             .await
+            .map_err(|_| SonioxASRError::ConnectionFailed("handshake timed out".into()))?
             .map_err(|e| SonioxASRError::ConnectionFailed(e.to_string()))?;
         let (write, read) = ws.split();
         *self.writer.lock().await = Some(write);
@@ -172,19 +214,50 @@ impl SonioxStreamingASR {
         *self.final_rx.lock() = Some(final_rx);
 
         let writer_for_worker = Arc::clone(&self.writer);
+        let weak_self = Arc::downgrade(self);
         self.task_spawner.spawn(Box::pin(async move {
-            while let Some(item) = send_rx.recv().await {
+            let mut heartbeat = tokio::time::interval(KEEPALIVE_INTERVAL);
+            let mut next_send = None;
+            heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                let item = tokio::select! {
+                    biased;
+                    item = send_rx.recv() => match item { Some(item) => item, None => break },
+                    _ = heartbeat.tick() => {
+                        let Some(this) = weak_self.upgrade() else { break; };
+                        {
+                            let state = this.state.lock();
+                            if state.task_finished { break; }
+                            if !state.config_sent { continue; }
+                        }
+                        if let Err(error) = send_text(&writer_for_worker, json!({"type": "keepalive"}).to_string()).await {
+                            this.finish_error(error);
+                            break;
+                        }
+                        continue;
+                    }
+                };
+                let Some(this) = weak_self.upgrade() else { break; };
+                if this.state.lock().task_finished { break; }
                 match item {
                     SendItem::Audio(chunk) => {
+                        super::streaming::pace_audio(&mut next_send, chunk.len()).await;
+                        if this.state.lock().task_finished { break; }
+                        let bytes = chunk.len() as u64;
                         if let Err(e) = send_binary(&writer_for_worker, chunk).await {
-                            log::error!("[soniox-asr] audio frame send failed: {e}");
+                            this.finish_error(e);
+                            break;
                         }
+                        this.state.lock().bytes_written += bytes;
                     }
                     SendItem::Finish(done) => {
-                        let result = send_text(&writer_for_worker, String::new())
-                            .await
-                            .map_err(|e| SonioxASRError::SendFailed(e.to_string()));
+                        this.state.lock().finish_sent = true;
+                        let result = send_text(&writer_for_worker, String::new()).await;
+                        if let Err(error) = &result {
+                            this.finish_error(SonioxASRError::SendFailed(error.to_string()));
+                        }
                         let _ = done.send(result);
+                        break;
                     }
                 }
             }
@@ -199,7 +272,11 @@ impl SonioxStreamingASR {
                 &self.credentials.terms,
             ),
         )
-        .await?;
+        .await
+        .map_err(|error| {
+            self.finish_error(SonioxASRError::SendFailed(error.to_string()));
+            error
+        })?;
         self.state.lock().config_sent = true;
 
         let weak_self = Arc::downgrade(self);
@@ -215,19 +292,21 @@ impl SonioxStreamingASR {
                             break;
                         }
                     }
-                    Ok(Message::Close(_)) => {
-                        this.finish_with_partial_or_error(SonioxASRError::NoFinalResult);
+                    Ok(Message::Close(frame)) => {
+                        log::warn!("[soniox-asr] peer closed stream before finished: {frame:?}");
+                        this.finish_error(SonioxASRError::NoFinalResult);
                         break;
                     }
                     Ok(_) => {}
                     Err(e) => {
                         log::error!("[soniox-asr] receive loop error: {e}");
-                        this.finish_with_partial_or_error(SonioxASRError::ConnectionFailed(
-                            e.to_string(),
-                        ));
+                        this.finish_error(SonioxASRError::ConnectionFailed(e.to_string()));
                         break;
                     }
                 }
+            }
+            if let Some(this) = weak_self.upgrade() {
+                this.finish_error(SonioxASRError::NoFinalResult);
             }
         }));
 
@@ -240,6 +319,11 @@ impl SonioxStreamingASR {
         // 一次性 flush 再发空字符串结束信号。
         let (send_tx, tail_chunks) = {
             let mut st = self.state.lock();
+            if st.task_finished {
+                // Preserve the original error already delivered to final_rx.
+                return Ok(());
+            }
+            st.finish_requested = true;
             let send_tx = st.send_tx.clone();
             if !st.pending_audio.is_empty() {
                 let pending = std::mem::take(&mut st.pending_audio);
@@ -260,8 +344,18 @@ impl SonioxStreamingASR {
             send_tx
                 .send(SendItem::Finish(done_tx))
                 .map_err(|_| SonioxASRError::SendFailed("send worker closed".to_string()))?;
-            done_rx
+            let pending = {
+                let state = self.state.lock();
+                state.bytes_received.saturating_sub(state.bytes_written)
+            };
+            tokio::time::timeout(super::streaming::drain_timeout(pending), done_rx)
                 .await
+                .map_err(|_| {
+                    self.finish_error(SonioxASRError::SendFailed(
+                        "audio backlog drain timed out".into(),
+                    ));
+                    SonioxASRError::SendFailed("audio backlog drain timed out".into())
+                })?
                 .map_err(|_| SonioxASRError::SendFailed("finish ack dropped".to_string()))??
         }
         Ok(())
@@ -272,10 +366,14 @@ impl SonioxStreamingASR {
         let Some(rx) = rx else {
             return Err(SonioxASRError::NoFinalResult);
         };
-        tokio::time::timeout(FINAL_RESULT_TIMEOUT, rx)
-            .await
-            .map_err(|_| SonioxASRError::FinalResultTimeout)?
-            .map_err(|_| SonioxASRError::NoFinalResult)?
+        let timeout = super::streaming::final_timeout(self.state.lock().bytes_received);
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(result)) => result,
+            _ => {
+                self.finish_error(SonioxASRError::FinalResultTimeout);
+                Err(SonioxASRError::FinalResultTimeout)
+            }
+        }
     }
 
     pub fn cancel(&self) {
@@ -311,21 +409,39 @@ impl SonioxStreamingASR {
     /// Soniox 响应字段：
     /// - `tokens: [{text, is_final, speaker?, language?}]`
     /// - `finished: bool`
-    /// - `error_code: string | null`
+    /// - `error_code: number | string | null`
     /// - `error_message: string | null`
     fn handle_response(&self, value: &Value) -> bool {
+        if self.state.lock().task_finished {
+            return false;
+        }
         // 错误优先：error_code 出现即终止并回报（与 Soniox 文档约定一致）。
-        if let Some(code) = value.get("error_code").and_then(Value::as_str) {
-            if !code.is_empty() {
-                let message = value
-                    .get("error_message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("soniox task failed")
-                    .to_string();
-                self.mark_task_started();
-                self.finish_error(SonioxASRError::TaskFailed(message));
-                return false;
-            }
+        if let Some(code) = value
+            .get("error_code")
+            .filter(|code| !code.is_null() && code.as_str() != Some(""))
+        {
+            let message = value
+                .get("error_message")
+                .and_then(Value::as_str)
+                .unwrap_or("soniox task failed")
+                .to_string();
+            let error_type = value["error_type"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_string();
+            log::error!(
+                "[soniox-asr] server error code={code} type={error_type} request_id={:?}",
+                value["request_id"].as_str()
+            );
+            self.finish_error(match code.as_u64() {
+                Some(code) => SonioxASRError::Server {
+                    code,
+                    error_type,
+                    message,
+                },
+                None => SonioxASRError::TaskFailed(message),
+            });
+            return false;
         }
 
         // 追加 final token 文本。非 final token 会随后续响应变化/被替换，
@@ -341,7 +457,7 @@ impl SonioxStreamingASR {
                     continue;
                 }
                 if let Some(text) = token.get("text").and_then(Value::as_str) {
-                    if !text.is_empty() {
+                    if !text.is_empty() && !matches!(text, "<end>" | "<fin>") {
                         self.state.lock().final_text.push_str(text);
                     }
                 }
@@ -349,13 +465,24 @@ impl SonioxStreamingASR {
         }
 
         self.mark_task_started();
+        if let Some(sink) = self.partial_sink.lock().clone() {
+            let text = self.state.lock().final_text.clone();
+            if !text.is_empty() {
+                let _ = sink.publish(TextStreamChunk { text, offset: 0 });
+            }
+        }
 
         if value
             .get("finished")
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
-            self.finish_success();
+            let finish_sent = self.state.lock().finish_sent;
+            if finish_sent {
+                self.finish_success();
+            } else {
+                self.finish_error(SonioxASRError::UnexpectedFinish);
+            }
             false
         } else {
             true
@@ -408,19 +535,6 @@ impl SonioxStreamingASR {
         self.close_on_runtime();
     }
 
-    fn finish_with_partial_or_error(&self, error: SonioxASRError) {
-        let has_partial = {
-            let st = self.state.lock();
-            !st.final_text.trim().is_empty()
-        };
-        if has_partial {
-            // 与 Volcengine / Bailian 一致：连接异常但已有 partial 时优先兜底返回，避免丢失已识别内容。
-            self.finish_success();
-        } else {
-            self.finish_error(error);
-        }
-    }
-
     fn finish_error(&self, error: SonioxASRError) {
         let tx = {
             let mut st = self.state.lock();
@@ -428,9 +542,15 @@ impl SonioxStreamingASR {
                 return;
             }
             st.task_finished = true;
+            log::error!("[soniox-asr] stream failed: {error}; received_audio_ms={} retained_chars={} finish_requested={}", st.bytes_received / BYTES_PER_MS, st.final_text.chars().count(), st.finish_requested);
+            st.pending_audio.clear();
+            st.audio_scratch.clear();
             st.send_tx.take();
             st.final_tx.take()
         };
+        if let Some(sink) = self.partial_sink.lock().clone() {
+            let _ = sink.fail(error.backend_error());
+        }
         if let Some(tx) = tx {
             let _ = tx.send(Err(error));
         }
@@ -452,6 +572,9 @@ impl AudioConsumer for SonioxStreamingASR {
         }
         let (send_tx, chunks) = {
             let mut st = self.state.lock();
+            if st.task_finished || st.finish_requested {
+                return;
+            }
             st.bytes_received = st.bytes_received.saturating_add(pcm.len() as u64);
             if !st.config_sent {
                 st.pending_audio.extend_from_slice(pcm);
@@ -469,12 +592,18 @@ impl AudioConsumer for SonioxStreamingASR {
     }
 }
 
-fn drain_audio_chunks(buffer: &mut Vec<u8>) -> Vec<Vec<u8>> {
-    let mut chunks = Vec::new();
-    while buffer.len() >= TARGET_AUDIO_CHUNK_BYTES {
-        chunks.push(buffer.drain(..TARGET_AUDIO_CHUNK_BYTES).collect());
+impl Drop for SonioxStreamingASR {
+    fn drop(&mut self) {
+        self.state.get_mut().send_tx.take();
+        let writer = Arc::clone(&self.writer);
+        self.task_spawner.spawn(Box::pin(async move {
+            let _ = close_writer(&writer).await;
+        }));
     }
-    chunks
+}
+
+fn drain_audio_chunks(buffer: &mut Vec<u8>) -> Vec<Vec<u8>> {
+    super::streaming::drain_chunks(buffer, TARGET_AUDIO_CHUNK_BYTES)
 }
 
 /// 构造 Soniox 初始配置消息。
@@ -507,34 +636,37 @@ pub fn build_config_message(api_key: &str, model: &str, terms: &[String]) -> Str
 }
 
 async fn send_text(writer: &SharedWriter, text: String) -> Result<(), SonioxASRError> {
-    let mut guard = writer.lock().await;
-    let Some(ws) = guard.as_mut() else {
-        return Err(SonioxASRError::ConnectionFailed(
-            "websocket writer not available".to_string(),
-        ));
-    };
-    ws.send(Message::Text(text.into()))
-        .await
-        .map_err(|e| SonioxASRError::SendFailed(e.to_string()))
+    send_message(writer, Message::Text(text.into())).await
 }
 
 async fn send_binary(writer: &SharedWriter, data: Vec<u8>) -> Result<(), SonioxASRError> {
-    let mut guard = writer.lock().await;
-    let Some(ws) = guard.as_mut() else {
-        return Err(SonioxASRError::ConnectionFailed(
-            "websocket writer not available".to_string(),
-        ));
-    };
-    ws.send(Message::Binary(data.into()))
-        .await
-        .map_err(|e| SonioxASRError::SendFailed(e.to_string()))
+    send_message(writer, Message::Binary(data.into())).await
+}
+
+async fn send_message(writer: &SharedWriter, message: Message) -> Result<(), SonioxASRError> {
+    tokio::time::timeout(IO_TIMEOUT, async {
+        let mut guard = writer.lock().await;
+        let Some(ws) = guard.as_mut() else {
+            return Err(SonioxASRError::ConnectionFailed(
+                "websocket writer not available".to_string(),
+            ));
+        };
+        ws.send(message)
+            .await
+            .map_err(|e| SonioxASRError::SendFailed(e.to_string()))
+    })
+    .await
+    .map_err(|_| SonioxASRError::SendFailed("write timed out".into()))?
 }
 
 async fn close_writer(writer: &SharedWriter) -> Result<(), SonioxASRError> {
-    let mut guard = writer.lock().await;
-    if let Some(mut ws) = guard.take() {
-        let _ = ws.close().await;
-    }
+    let _ = tokio::time::timeout(IO_TIMEOUT, async {
+        let mut guard = writer.lock().await;
+        if let Some(mut ws) = guard.take() {
+            let _ = ws.close().await;
+        }
+    })
+    .await;
     Ok(())
 }
 
@@ -578,7 +710,10 @@ mod tests {
         asr: &SonioxStreamingASR,
     ) -> oneshot::Receiver<Result<RawTranscript, SonioxASRError>> {
         let (tx, rx) = oneshot::channel();
-        asr.state.lock().final_tx = Some(tx);
+        let mut state = asr.state.lock();
+        state.final_tx = Some(tx);
+        state.finish_requested = true;
+        state.finish_sent = true;
         rx
     }
 
@@ -734,5 +869,194 @@ mod tests {
         };
         assert_eq!(c.normalized_endpoint(), DEFAULT_ENDPOINT);
         assert_eq!(c.normalized_model(), DEFAULT_MODEL);
+    }
+
+    #[derive(Default)]
+    struct LiveCapture {
+        text: ParkingMutex<String>,
+        errors: ParkingMutex<Vec<crate::BackendError>>,
+        failed: tokio::sync::Notify,
+    }
+
+    impl TextStreamSink for LiveCapture {
+        fn publish(&self, chunk: TextStreamChunk) -> Result<(), crate::BackendError> {
+            *self.text.lock() = chunk.text;
+            Ok(())
+        }
+
+        fn fail(&self, error: crate::BackendError) -> Result<(), crate::BackendError> {
+            self.errors.lock().push(error);
+            self.failed.notify_one();
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn numeric_server_error_is_not_a_successful_partial() {
+        for code in [408, 429, 503, 401] {
+            let asr = make_asr();
+            let rx = install_final_tx(&asr);
+            let capture = Arc::new(LiveCapture::default());
+            asr.set_partial_sink(capture.clone());
+            asr.handle_response(&make_response(&[("retained draft", true)], false));
+            assert!(!asr.handle_response(&json!({"error_code": code, "error_type": "test_error", "error_message": "stream interrupted"})));
+            assert!(
+                matches!(rx.await.unwrap(), Err(SonioxASRError::Server { code: actual, .. }) if actual == code)
+            );
+            assert_eq!(*capture.text.lock(), "retained draft");
+            assert_eq!(capture.errors.lock().len(), 1);
+            assert_eq!(capture.errors.lock()[0].retryable, code != 401);
+            asr.finish_error(SonioxASRError::NoFinalResult);
+            assert_eq!(capture.errors.lock().len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn endpoint_markers_are_not_transcript_text() {
+        let asr = make_asr();
+        let rx = install_final_tx(&asr);
+        asr.handle_response(&make_response(
+            &[
+                ("first", true),
+                ("<end>", true),
+                (" second", true),
+                ("<fin>", true),
+            ],
+            true,
+        ));
+        assert_eq!(rx.await.unwrap().unwrap().text, "first second");
+    }
+
+    #[tokio::test]
+    async fn finished_before_end_of_audio_is_an_interruption() {
+        let asr = make_asr();
+        let rx = install_final_tx(&asr);
+        asr.state.lock().finish_sent = false;
+        assert!(!asr.handle_response(&make_response(&[("truncated", true)], true)));
+        assert!(matches!(
+            rx.await.unwrap(),
+            Err(SonioxASRError::UnexpectedFinish)
+        ));
+    }
+
+    #[tokio::test]
+    async fn peer_disconnect_notifies_before_user_stops_and_rejects_partial_success() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut credentials = creds();
+        credentials.endpoint = format!("ws://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+            let Message::Text(config) = ws.next().await.unwrap().unwrap() else {
+                panic!("expected config first");
+            };
+            assert_eq!(
+                serde_json::from_str::<Value>(&config).unwrap()["model"],
+                DEFAULT_MODEL
+            );
+            ws.send(Message::Text(
+                make_response(&[("only first half", true)], false)
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+            ws.close(None).await.unwrap();
+        });
+        let asr = Arc::new(SonioxStreamingASR::new(credentials));
+        let capture = Arc::new(LiveCapture::default());
+        asr.set_partial_sink(capture.clone());
+        asr.open_session().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), capture.failed.notified())
+            .await
+            .unwrap();
+        assert_eq!(*capture.text.lock(), "only first half");
+        assert_eq!(
+            capture.errors.lock().len(),
+            1,
+            "must alert without waiting for key release"
+        );
+        asr.consume_pcm_chunk(&vec![0; TARGET_AUDIO_CHUNK_BYTES]);
+        assert!(asr.state.lock().audio_scratch.is_empty());
+        asr.send_last_frame().await.unwrap();
+        assert!(asr.await_final_result().await.is_err());
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn complete_long_recording_requires_all_audio_then_finished() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut credentials = creds();
+        credentials.endpoint = format!("ws://{}", listener.local_addr().unwrap());
+        let bytes = 90 * 16_000 * 2;
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+            assert!(matches!(
+                ws.next().await.unwrap().unwrap(),
+                Message::Text(_)
+            ));
+            let mut received = 0;
+            while let Some(message) = ws.next().await {
+                match message.unwrap() {
+                    Message::Binary(audio) => received += audio.len(),
+                    Message::Text(text) if text.is_empty() => break,
+                    Message::Text(_) => {}
+                    other => panic!("unexpected frame {other:?}"),
+                }
+            }
+            assert_eq!(received, bytes);
+            // Keep this a real socket/clock test: paused time can race kernel IO
+            // readiness and falsely expire a timeout before a response is read.
+            tokio::time::sleep(Duration::from_secs(13)).await;
+            ws.send(Message::Text(
+                make_response(&[("full transcript", true), ("<end>", true)], true)
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        });
+        let asr = Arc::new(SonioxStreamingASR::new(credentials));
+        asr.open_session().await.unwrap();
+        asr.consume_pcm_chunk(&vec![0; bytes]);
+        asr.send_last_frame().await.unwrap();
+        let result = asr.await_final_result().await.unwrap();
+        assert_eq!(result.text, "full transcript");
+        assert_eq!(result.duration_ms, 90_000);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn idle_audio_gap_sends_keepalive_without_ending_session() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut credentials = creds();
+        credentials.endpoint = format!("ws://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+            let Message::Text(config) = ws.next().await.unwrap().unwrap() else {
+                panic!("expected config");
+            };
+            assert!(serde_json::from_str::<Value>(&config)
+                .unwrap()
+                .get("api_key")
+                .is_some());
+            let Message::Text(keepalive) = ws.next().await.unwrap().unwrap() else {
+                panic!("expected keepalive");
+            };
+            assert_eq!(
+                serde_json::from_str::<Value>(&keepalive).unwrap(),
+                json!({"type": "keepalive"})
+            );
+            ws.close(None).await.unwrap();
+        });
+        let asr = Arc::new(SonioxStreamingASR::new(credentials));
+        asr.open_session().await.unwrap();
+        tokio::time::timeout(KEEPALIVE_INTERVAL + Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(asr.await_final_result().await.is_err());
     }
 }

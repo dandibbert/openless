@@ -63,6 +63,17 @@ struct PrefixedSink {
 }
 
 impl TextStreamSink for PrefixedSink {
+    fn fail(&self, error: crate::BackendError) -> Result<(), crate::BackendError> {
+        if let Some(shared) = self.shared.upgrade() {
+            if shared.terminal.lock().is_none() {
+                if let Some(sink) = shared.sink.lock().clone() {
+                    return sink.fail(error);
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn publish(&self, chunk: TextStreamChunk) -> Result<(), crate::BackendError> {
         if let Some(shared) = self.shared.upgrade() {
             if shared.terminal.lock().is_some() {

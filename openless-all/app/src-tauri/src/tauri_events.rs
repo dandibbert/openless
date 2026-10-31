@@ -527,35 +527,47 @@ fn map_dictation_state(
     snapshot: DictationStateSnapshot,
     capsule_style: CapsuleStyle,
 ) -> CapsulePayload {
-    let state = match snapshot.phase {
-        DictationPhase::Idle => CapsuleState::Idle,
-        DictationPhase::Starting | DictationPhase::Recording => CapsuleState::Recording,
-        DictationPhase::Transcribing => CapsuleState::Transcribing,
-        DictationPhase::Polishing | DictationPhase::Inserting => CapsuleState::Polishing,
-        DictationPhase::Completed => CapsuleState::Done,
-        DictationPhase::Cancelled => CapsuleState::Cancelled,
-        DictationPhase::Failed => CapsuleState::Error,
+    let stream_disconnected = snapshot
+        .message
+        .as_deref()
+        .is_some_and(|message| message.starts_with("Speech recognition disconnected;"));
+    let state = if stream_disconnected {
+        CapsuleState::Error
+    } else {
+        match snapshot.phase {
+            DictationPhase::Idle => CapsuleState::Idle,
+            DictationPhase::Starting | DictationPhase::Recording => CapsuleState::Recording,
+            DictationPhase::Transcribing => CapsuleState::Transcribing,
+            DictationPhase::Polishing | DictationPhase::Inserting => CapsuleState::Polishing,
+            DictationPhase::Completed => CapsuleState::Done,
+            DictationPhase::Cancelled => CapsuleState::Cancelled,
+            DictationPhase::Failed => CapsuleState::Error,
+        }
     };
-    let message = match snapshot.phase {
-        DictationPhase::Failed => Some(match snapshot.message.as_deref() {
-            Some("PermissionDenied") => "请允许麦克风权限后重试".to_string(),
-            Some("Busy") => "另一个语音任务正在进行".to_string(),
-            Some("Cancelled") => "已取消".to_string(),
-            Some("Provider") | Some("Network") | Some("Timeout") => {
-                "识别或润色失败，请重试".to_string()
-            }
-            Some("Platform") => "录音或输入失败，请重试".to_string(),
-            Some("InvalidArgument") => "输入或设置无效，请检查后重试".to_string(),
-            Some("InvalidState") => "当前状态无法完成此操作，请重试".to_string(),
-            Some("Unsupported") => "当前配置或平台不支持此操作".to_string(),
-            Some("Persistence") => "保存结果失败，请检查磁盘后重试".to_string(),
-            Some("OutcomeUnknown") => "无法确认是否已输入，请检查目标应用".to_string(),
-            Some("Internal") => "处理遇到内部错误，请重试".to_string(),
-            Some(message) if !message.trim().is_empty() => message.to_string(),
-            _ => "处理失败，请重试".to_string(),
-        }),
-        DictationPhase::Cancelled => Some("已取消".to_string()),
-        _ => snapshot.message,
+    let message = if stream_disconnected {
+        Some("识别连接已断开，正在停止录音；转写不完整，请勿继续口述".to_string())
+    } else {
+        match snapshot.phase {
+            DictationPhase::Failed => Some(match snapshot.message.as_deref() {
+                Some("PermissionDenied") => "请允许麦克风权限后重试".to_string(),
+                Some("Busy") => "另一个语音任务正在进行".to_string(),
+                Some("Cancelled") => "已取消".to_string(),
+                Some("Provider") | Some("Network") | Some("Timeout") => {
+                    "识别或润色失败，请重试".to_string()
+                }
+                Some("Platform") => "录音或输入失败，请重试".to_string(),
+                Some("InvalidArgument") => "输入或设置无效，请检查后重试".to_string(),
+                Some("InvalidState") => "当前状态无法完成此操作，请重试".to_string(),
+                Some("Unsupported") => "当前配置或平台不支持此操作".to_string(),
+                Some("Persistence") => "保存结果失败，请检查磁盘后重试".to_string(),
+                Some("OutcomeUnknown") => "无法确认是否已输入，请检查目标应用".to_string(),
+                Some("Internal") => "处理遇到内部错误，请重试".to_string(),
+                Some(message) if !message.trim().is_empty() => message.to_string(),
+                _ => "处理失败，请重试".to_string(),
+            }),
+            DictationPhase::Cancelled => Some("已取消".to_string()),
+            _ => snapshot.message,
+        }
     };
     CapsulePayload {
         session_id: snapshot.session_id.map(|session| session.to_string()),
@@ -890,6 +902,21 @@ fn resync_domain_events(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn live_asr_disconnect_shows_error_instead_of_recording_indicator() {
+        let payload = map_dictation_state(
+            DictationStateSnapshot {
+                session_id: Some(SessionId::new()),
+                phase: DictationPhase::Recording,
+                message: Some("Speech recognition disconnected; stopping recording. The transcript is incomplete.".into()),
+                ..Default::default()
+            },
+            CapsuleStyle::Classic,
+        );
+        assert_eq!(payload.state, CapsuleState::Error);
+        assert!(payload.message.unwrap().contains("请勿继续口述"));
+    }
+
     use super::*;
 
     #[test]

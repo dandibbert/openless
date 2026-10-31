@@ -335,6 +335,7 @@ impl TencentCloudSession {
     }
 
     pub fn cancel(&self) {
+        self.partial_sink.lock().take();
         self.state.lock().pending_audio.clear();
         *self.handshake_tx.lock() = None;
         *self.send_tx.lock() = None;
@@ -500,6 +501,12 @@ impl TencentCloudSession {
         };
         *self.send_tx.lock() = None;
         if let Some(sender) = sender {
+            if let Some(sink) = self.partial_sink.lock().clone() {
+                let _ = sink.fail(crate::BackendError::new(
+                    crate::BackendErrorCode::Provider,
+                    format!("Tencent Cloud ASR interrupted: {error}"),
+                ));
+            }
             let _ = sender.send(Err(error));
         }
     }

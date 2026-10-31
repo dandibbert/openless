@@ -35,7 +35,6 @@ pub const DEFAULT_MODEL: &str = "fun-asr-realtime";
 pub const TARGET_AUDIO_CHUNK_BYTES: usize = 3_200;
 const TARGET_AUDIO_CHUNK_BYTES_8K: usize = 1_600;
 const BYTES_PER_MS: u64 = 32;
-const FINAL_RESULT_TIMEOUT: Duration = Duration::from_secs(12);
 /// Cap on the WebSocket handshake (TCP + TLS + HTTP upgrade) itself. Without it
 /// `connect_async` waits forever, and `open_session` is awaited with `block_on` on
 /// the serial hotkey bridge thread — a hang means hotkeys are completely dead
@@ -205,6 +204,7 @@ struct SyncState {
     bytes_received: u64,
     task_started: bool,
     task_finished: bool,
+    end_sent: bool,
     start: Option<Instant>,
     final_tx: Option<oneshot::Sender<Result<RawTranscript, BailianASRError>>>,
     send_tx: Option<mpsc::UnboundedSender<SendItem>>,
@@ -294,6 +294,7 @@ impl BailianRealtimeASR {
         *self.final_rx.lock() = Some(final_rx);
 
         let writer_for_worker = Arc::clone(&self.writer);
+        let weak_for_worker = Arc::downgrade(self);
         let task_id_for_worker = task_id.clone();
         let task_spawner = Arc::clone(&self.task_spawner);
         task_spawner.spawn(Box::pin(async move {
@@ -301,10 +302,16 @@ impl BailianRealtimeASR {
                 match item {
                     SendItem::Audio(chunk) => {
                         if let Err(e) = send_binary(&writer_for_worker, chunk).await {
-                            log::error!("[bailian-asr] audio frame send failed: {e}");
+                            if let Some(this) = weak_for_worker.upgrade() {
+                                this.finish_error(e);
+                            }
+                            break;
                         }
                     }
                     SendItem::Finish(done) => {
+                        if let Some(this) = weak_for_worker.upgrade() {
+                            this.state.lock().end_sent = true;
+                        }
                         let result =
                             send_text(&writer_for_worker, finish_task_message(&task_id_for_worker))
                                 .await
@@ -353,6 +360,9 @@ impl BailianRealtimeASR {
                     }
                 }
             }
+            if let Some(this) = weak_self.upgrade() {
+                this.finish_error(BailianASRError::NoFinalResult);
+            }
         }));
 
         Ok(())
@@ -398,8 +408,10 @@ impl BailianRealtimeASR {
         send_tx
             .send(SendItem::Finish(done_tx))
             .map_err(|_| BailianASRError::SendFailed("send worker closed".to_string()))?;
-        done_rx
+        let timeout = super::streaming::drain_timeout(self.state.lock().bytes_received);
+        tokio::time::timeout(timeout, done_rx)
             .await
+            .map_err(|_| BailianASRError::FinalResultTimeout)?
             .map_err(|_| BailianASRError::SendFailed("finish ack dropped".to_string()))?
     }
 
@@ -408,7 +420,8 @@ impl BailianRealtimeASR {
         let Some(rx) = rx else {
             return Err(BailianASRError::NoFinalResult);
         };
-        tokio::time::timeout(FINAL_RESULT_TIMEOUT, rx)
+        let timeout = super::streaming::final_timeout(self.state.lock().bytes_received);
+        tokio::time::timeout(timeout, rx)
             .await
             .map_err(|_| BailianASRError::FinalResultTimeout)?
             .map_err(|_| BailianASRError::NoFinalResult)?
@@ -452,7 +465,12 @@ impl BailianRealtimeASR {
                 true
             }
             "task-finished" => {
-                self.finish_success();
+                let end_sent = self.state.lock().end_sent;
+                if end_sent {
+                    self.finish_success();
+                } else {
+                    self.finish_error(BailianASRError::NoFinalResult);
+                }
                 false
             }
             "task-failed" => {
@@ -590,20 +608,8 @@ impl BailianRealtimeASR {
     }
 
     fn finish_with_partial_or_error(&self, error: BailianASRError) {
-        let has_partial = {
-            let st = self.state.lock();
-            !st.last_result_text.trim().is_empty()
-                || !st.final_segments.is_empty()
-                || !st.partial_segments.is_empty()
-        };
-        if has_partial {
-            // Consistent with Volcengine: when the connection breaks but a partial
-            // already exists, return it rather than the error, so recognized text is
-            // not lost.
-            self.finish_success();
-        } else {
-            self.finish_error(error);
-        }
+        // Retain drafts through the sink, never disguise a failed stream as complete.
+        self.finish_error(error);
     }
 
     fn finish_error(&self, error: BailianASRError) {
@@ -616,6 +622,12 @@ impl BailianRealtimeASR {
             st.send_tx.take();
             st.final_tx.take()
         };
+        if let Some(sink) = self.partial_sink.lock().clone() {
+            let _ = sink.fail(crate::BackendError::new(
+                crate::BackendErrorCode::Provider,
+                format!("ASR stream interrupted: {error}"),
+            ));
+        }
         if let Some(tx) = tx {
             let _ = tx.send(Err(error));
         }
@@ -639,6 +651,9 @@ impl AudioConsumer for BailianRealtimeASR {
         let model = self.credentials.normalized_model();
         let (send_tx, chunks) = {
             let mut st = self.state.lock();
+            if st.task_finished {
+                return;
+            }
             st.bytes_received = st.bytes_received.saturating_add(pcm.len() as u64);
             let audio = if model_is_8k(&model) {
                 st.downsample_remainder.extend_from_slice(pcm);
@@ -680,11 +695,7 @@ fn drain_audio_chunks_for_model(buffer: &mut Vec<u8>, model: &str) -> Vec<Vec<u8
 }
 
 fn drain_audio_chunks_with_target(buffer: &mut Vec<u8>, target: usize) -> Vec<Vec<u8>> {
-    let mut chunks = Vec::new();
-    while buffer.len() >= target {
-        chunks.push(buffer.drain(..target).collect());
-    }
-    chunks
+    super::streaming::drain_chunks(buffer, target)
 }
 
 fn model_is_8k(model: &str) -> bool {
@@ -782,27 +793,35 @@ fn finish_task_message(task_id: &str) -> String {
 }
 
 async fn send_text(writer: &SharedWriter, text: String) -> Result<(), BailianASRError> {
-    let mut guard = writer.lock().await;
-    let Some(ws) = guard.as_mut() else {
-        return Err(BailianASRError::ConnectionFailed(
-            "websocket writer not available".to_string(),
-        ));
-    };
-    ws.send(Message::Text(text.into()))
-        .await
-        .map_err(|e| BailianASRError::SendFailed(e.to_string()))
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let mut guard = writer.lock().await;
+        let Some(ws) = guard.as_mut() else {
+            return Err(BailianASRError::ConnectionFailed(
+                "websocket writer not available".to_string(),
+            ));
+        };
+        ws.send(Message::Text(text.into()))
+            .await
+            .map_err(|e| BailianASRError::SendFailed(e.to_string()))
+    })
+    .await
+    .map_err(|_| BailianASRError::SendFailed("socket write timed out".into()))?
 }
 
 async fn send_binary(writer: &SharedWriter, data: Vec<u8>) -> Result<(), BailianASRError> {
-    let mut guard = writer.lock().await;
-    let Some(ws) = guard.as_mut() else {
-        return Err(BailianASRError::ConnectionFailed(
-            "websocket writer not available".to_string(),
-        ));
-    };
-    ws.send(Message::Binary(data.into()))
-        .await
-        .map_err(|e| BailianASRError::SendFailed(e.to_string()))
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let mut guard = writer.lock().await;
+        let Some(ws) = guard.as_mut() else {
+            return Err(BailianASRError::ConnectionFailed(
+                "websocket writer not available".to_string(),
+            ));
+        };
+        ws.send(Message::Binary(data.into()))
+            .await
+            .map_err(|e| BailianASRError::SendFailed(e.to_string()))
+    })
+    .await
+    .map_err(|_| BailianASRError::SendFailed("socket write timed out".into()))?
 }
 
 async fn close_writer(writer: &SharedWriter) -> Result<(), BailianASRError> {
@@ -816,6 +835,19 @@ async fn close_writer(writer: &SharedWriter) -> Result<(), BailianASRError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn disconnect_never_promotes_partial_transcript_to_success() {
+        let asr = create_test_asr();
+        let (tx, rx) = oneshot::channel();
+        asr.state.lock().final_tx = Some(tx);
+        asr.state.lock().last_result_text = "unfinished draft".into();
+        asr.finish_with_partial_or_error(BailianASRError::NoFinalResult);
+        assert!(matches!(
+            rx.await.unwrap(),
+            Err(BailianASRError::NoFinalResult)
+        ));
+    }
 
     #[test]
     fn transcript_snapshots_keep_prefix_and_recognition_corrections() {

@@ -31,7 +31,6 @@ const AUDIO_CHUNK_BYTES: usize = 3_200; // 100 ms, 16 kHz mono PCM16.
 const MIN_AUDIO_BYTES: usize = 1_600; // AssemblyAI requires at least 50 ms per frame.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
-const FINAL_TIMEOUT: Duration = Duration::from_secs(15);
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 type SharedWriter = Arc<AsyncMutex<Option<futures_util::stream::SplitSink<WsStream, Message>>>>;
@@ -156,8 +155,10 @@ struct Turn {
 struct State {
     audio: Vec<u8>,
     bytes_received: u64,
+    bytes_written: u64,
     started: bool,
     finishing: bool,
+    termination_sent: bool,
     finished: bool,
     turns: BTreeMap<u64, Turn>,
     ready_tx: Option<oneshot::Sender<Result<(), String>>>,
@@ -228,13 +229,29 @@ impl AssemblyAiStreamingASR {
         let writer = Arc::clone(&self.writer);
         let weak = Arc::downgrade(self);
         self.task_spawner.spawn(Box::pin(async move {
+            let mut next_send = None;
             while let Some(item) = send_rx.recv().await {
                 let (message, done) = match item {
-                    SendItem::Audio(bytes) => (Message::Binary(bytes.into()), None),
-                    SendItem::Finish(done) => (
-                        Message::Text(json!({"type": "Terminate"}).to_string().into()),
-                        Some(done),
-                    ),
+                    SendItem::Audio(bytes) => {
+                        super::streaming::pace_audio(&mut next_send, bytes.len()).await;
+                        if weak.upgrade().is_none_or(|this| this.state.lock().finished) {
+                            break;
+                        }
+                        (Message::Binary(bytes.into()), None)
+                    }
+                    SendItem::Finish(done) => {
+                        if let Some(this) = weak.upgrade() {
+                            this.state.lock().termination_sent = true;
+                        }
+                        (
+                            Message::Text(json!({"type": "Terminate"}).to_string().into()),
+                            Some(done),
+                        )
+                    }
+                };
+                let bytes = match &message {
+                    Message::Binary(bytes) => bytes.len() as u64,
+                    _ => 0,
                 };
                 let result = send_message(&writer, message).await;
                 let failed = result.is_err();
@@ -242,6 +259,8 @@ impl AssemblyAiStreamingASR {
                     if let Some(this) = weak.upgrade() {
                         this.finish(Err(AssemblyAiError::Task("audio send failed".into())));
                     }
+                } else if let Some(this) = weak.upgrade() {
+                    this.state.lock().bytes_written += bytes;
                 }
                 if let Some(done) = done {
                     let _ = done.send(result);
@@ -316,7 +335,11 @@ impl AssemblyAiStreamingASR {
                 .map_err(|_| AssemblyAiError::Closed)?;
             done_rx
         };
-        let result = tokio::time::timeout(WRITE_TIMEOUT, done_rx).await;
+        let pending = {
+            let state = self.state.lock();
+            state.bytes_received.saturating_sub(state.bytes_written)
+        };
+        let result = tokio::time::timeout(super::streaming::drain_timeout(pending), done_rx).await;
         match result {
             Ok(Ok(Ok(()))) => Ok(()),
             Ok(Ok(Err(error))) => {
@@ -332,7 +355,8 @@ impl AssemblyAiStreamingASR {
 
     pub async fn await_final_result(&self) -> FinalResult {
         let receiver = self.final_rx.lock().take().ok_or(AssemblyAiError::Closed)?;
-        match tokio::time::timeout(FINAL_TIMEOUT, receiver).await {
+        let timeout = super::streaming::final_timeout(self.state.lock().bytes_received);
+        match tokio::time::timeout(timeout, receiver).await {
             Ok(Ok(result)) => result,
             _ => {
                 self.cancel();
@@ -342,6 +366,8 @@ impl AssemblyAiStreamingASR {
     }
 
     pub fn cancel(&self) {
+        // Explicit user cancellation isn't an unexpected disconnect notification.
+        self.partial_sink.lock().take();
         self.finish(Err(AssemblyAiError::Closed));
     }
 
@@ -396,6 +422,12 @@ impl AssemblyAiStreamingASR {
                 }
             }
             "Termination" => {
+                if !self.state.lock().termination_sent {
+                    self.finish(Err(AssemblyAiError::Task(
+                        "server terminated before audio upload completed".into(),
+                    )));
+                    return false;
+                }
                 let result = {
                     let state = self.state.lock();
                     RawTranscript {
@@ -431,8 +463,17 @@ impl AssemblyAiStreamingASR {
                 .map(ToString::to_string)
                 .unwrap_or_else(|| "session ended before Begin".into())));
         }
+        let error = result.as_ref().err().map(|error| {
+            crate::BackendError::new(crate::BackendErrorCode::Provider, error.to_string())
+        });
         if let Some(tx) = state.final_tx.take() {
             let _ = tx.send(result);
+        }
+        drop(state);
+        if let Some(error) = error {
+            if let Some(sink) = self.partial_sink.lock().clone() {
+                let _ = sink.fail(error);
+            }
         }
         // Also close immediately on cancel, rather than draining queued audio.
         let writer = Arc::clone(&self.writer);
@@ -478,8 +519,7 @@ fn transcript(state: &State) -> String {
 }
 
 fn flush_audio(state: &mut State) {
-    while state.audio.len() >= AUDIO_CHUNK_BYTES {
-        let chunk = state.audio.drain(..AUDIO_CHUNK_BYTES).collect();
+    for chunk in super::streaming::drain_chunks(&mut state.audio, AUDIO_CHUNK_BYTES) {
         if let Some(sender) = &state.send_tx {
             let _ = sender.send(SendItem::Audio(chunk));
         }
@@ -621,6 +661,7 @@ mod tests {
         let (tx, rx) = oneshot::channel();
         asr.state.lock().final_tx = Some(tx);
         asr.consume_pcm_chunk(&vec![0; 3_200]);
+        asr.state.lock().termination_sent = true;
         assert!(!asr.handle_response(&json!({"type": "Termination"})));
         let result = rx.await.unwrap().unwrap();
         assert_eq!(result.text, "");
@@ -706,6 +747,39 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn replay_longer_than_one_write_timeout_drains_before_terminate() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut creds = credentials();
+        creds.endpoint = format!("ws://{}/v3/ws", listener.local_addr().unwrap());
+        let bytes = 7 * 32_000;
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+            ws.send(Message::Text(json!({"type": "Begin"}).to_string().into())).await.unwrap();
+            let mut received = 0;
+            while let Some(message) = ws.next().await {
+                match message.unwrap() {
+                    Message::Binary(audio) => received += audio.len(),
+                    Message::Text(text) => {
+                        assert_eq!(serde_json::from_str::<Value>(&text).unwrap()["type"], "Terminate");
+                        break;
+                    }
+                    other => panic!("unexpected message {other:?}"),
+                }
+            }
+            assert_eq!(received, bytes);
+            ws.send(Message::Text(turn(0, "All audio received.", true, true).to_string().into())).await.unwrap();
+            ws.send(Message::Text(json!({"type": "Termination"}).to_string().into())).await.unwrap();
+        });
+        let asr = Arc::new(AssemblyAiStreamingASR::new(creds));
+        asr.open_session().await.unwrap();
+        asr.consume_pcm_chunk(&vec![1; bytes]);
+        asr.send_last_frame().await.unwrap();
+        assert_eq!(asr.await_final_result().await.unwrap().text, "All audio received.");
+        server.await.unwrap();
     }
 
     #[tokio::test]
