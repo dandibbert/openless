@@ -506,7 +506,7 @@
     {
       "authRequirement": "api_key",
       "defaultEndpoint": "https://generativelanguage.googleapis.com/v1beta",
-      "defaultModel": "gemini-2.5-flash",
+      "defaultModel": "gemini-3.5-flash-lite",
       "defaultRequestFormat": null,
       "kind": "llm",
       "labelKey": "gemini",
@@ -809,7 +809,7 @@
     {
       "authRequirement": "api_key",
       "defaultEndpoint": "https://generativelanguage.googleapis.com/v1beta",
-      "defaultModel": "gemini-2.5-flash",
+      "defaultModel": "gemini-3.5-flash-lite",
       "defaultRequestFormat": null,
       "kind": "omni",
       "labelKey": "omniGemini",

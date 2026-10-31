@@ -542,8 +542,15 @@ for (const overlay of [false, true]) {
     );
   }
 }
-// The main window's recording cue must not see synthetic mirror lifecycle events either.
-for (const macNativeCue of [false, true]) {
+// Only the primary capsule owns recording cues; main and mirror windows stay silent.
+for (const { macNativeCue, label } of [
+  { macNativeCue: false, label: 'main' },
+  { macNativeCue: true, label: 'main' },
+  { macNativeCue: false, label: 'capsule' },
+  { macNativeCue: true, label: 'capsule' },
+  { macNativeCue: false, label: 'capsule-mirror-0' },
+  { macNativeCue: true, label: 'capsule-mirror-0' },
+]) {
   const cueSource = readFileSync(
     new URL('../src/components/AudioCue.tsx', import.meta.url),
     'utf8',
@@ -598,26 +605,33 @@ for (const macNativeCue of [false, true]) {
           },
         };
       if (name === '@tauri-apps/api/webviewWindow')
-        return { getCurrentWebviewWindow: () => ({ label: 'main' }) };
+        return { getCurrentWebviewWindow: () => ({ label }) };
       assert.equal(name, '@tauri-apps/api/event');
       return {
-        listen: async (name, callback, options) => bus.listen('main', name, callback, options),
+        listen: async (name, callback, options) => bus.listen(label, name, callback, options),
       };
     },
   };
   vm.runInNewContext(compile(`globalThis.effect = (${cueEffect});`), scope);
   const cleanup = scope.effect();
-  await until(() => bus.size === 1);
-  bus.emit('main', 'capsule:state', { state: 'recording' });
-  await until(() => plays === 1);
-  bus.emit('capsule-mirror-0', 'capsule:state', { state: 'idle' });
-  bus.emit('main', 'capsule:state', { state: 'recording' });
-  assert.equal(plays, 1, 'hidden mirror cleanup must not replay the recording cue');
-  assert.equal(stops, 0);
-  bus.emit('main', 'capsule:state', { state: 'idle' });
-  await until(() => stops === 1);
-  assert.equal(stops, 1);
-  assert.equal(webAudioCalls, macNativeCue ? 0 : 2);
+  if (label === 'capsule') {
+    await until(() => bus.size === 1);
+    bus.emit(label, 'capsule:state', { state: 'recording' });
+    await until(() => plays === 1);
+    bus.emit('capsule-mirror-0', 'capsule:state', { state: 'idle' });
+    bus.emit(label, 'capsule:state', { state: 'recording' });
+    assert.equal(plays, 1, 'hidden mirror cleanup must not replay the recording cue');
+    assert.equal(stops, 0);
+    bus.emit(label, 'capsule:state', { state: 'idle' });
+    await until(() => stops === 1);
+    assert.equal(stops, 1);
+    assert.equal(webAudioCalls, macNativeCue ? 0 : 2);
+  } else {
+    await tick();
+    assert.equal(bus.size, 0, 'main window must not subscribe to capsule recording cues');
+    assert.equal(plays, 0, 'opening the main window must not play the recording cue');
+    assert.equal(stops, 0);
+  }
   cleanup();
   assert.equal(bus.size, 0);
 }

@@ -55,10 +55,21 @@ const manifest = await readFile(new URL('../src-tauri/Cargo.toml', import.meta.u
 if (/\[target\..*cfg\(target_os = "linux"\)/.test(manifest)) {
   failures.push('src-tauri/Cargo.toml: declares a Linux target dependency table');
 }
-for (const forbidden of ['wayland-scanner', 'linux-native-sync-persistent', '[patch.crates-io]']) {
+for (const forbidden of ['wayland-scanner', 'linux-native-sync-persistent']) {
   if (manifest.includes(forbidden)) {
     failures.push(`src-tauri/Cargo.toml: still references ${forbidden}`);
   }
+}
+// Allow only the Windows target ownership patch, not the retired Linux stack.
+let inPatch = false;
+const patchEntries = [];
+for (const raw of manifest.split('\n')) {
+  const line = raw.trim();
+  if (line.startsWith('[')) inPatch = line === '[patch.crates-io]';
+  else if (inPatch && line && !line.startsWith('#')) patchEntries.push(line);
+}
+if (patchEntries.length !== 1 || patchEntries[0] !== 'tauri-runtime-wry = { path = "vendor/tauri-runtime-wry" }') {
+  failures.push('src-tauri/Cargo.toml: unapproved crates.io patch');
 }
 try {
   await access(new URL('../src-tauri/vendor/wayland-scanner', import.meta.url), constants.F_OK);

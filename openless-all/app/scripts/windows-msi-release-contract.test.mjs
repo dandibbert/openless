@@ -34,7 +34,7 @@ assert.match(
   'Windows artifact must publish the provenance manifest beside installers',
 );
 const checkout = steps.find((s) => s.uses === 'actions/checkout@v4');
-assert.equal(checkout.with.ref, '${{ inputs.release_tag || github.ref }}');
+assert.equal(checkout.with.ref, '${{ inputs.release_tag || github.sha }}');
 const guard = steps.find((s) => s.name === 'Validate targeted draft release repair');
 assert.equal(guard.if, "inputs.release_tag != ''");
 assert.match(guard.run, /permission.*admin/);
@@ -78,7 +78,7 @@ assert.equal(originalVersion('2.0.0+build.20261016').bundle.createUpdaterArtifac
 for (const version of ['256.0.0', '1.256.0', '1.0.65536', 'invalid'])
   assert.throws(() => originalVersion(version));
 assert.equal(
-  (build.run.match(/build --bundles msi --config src-tauri\/tauri.msi-version.json/g) ?? []).length,
+  (build.run.match(/build "\$\{diagnostic_args\[@\]\}" --bundles msi --config src-tauri\/tauri.msi-version.json/g) ?? []).length,
   2,
 );
 const publisher = steps.find((s) => s.uses?.startsWith('softprops/action-gh-release@'));

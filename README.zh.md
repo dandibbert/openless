@@ -51,11 +51,15 @@
 </p>
 
 <p align="center">
-  <a href="https://www.knin.net" target="_blank" rel="noopener">
-    <img alt="悠雾云数据 (Youwu Cloud Data)" src="https://www.knin.net/upload/logo.png" height="52" />
+  <a href="https://www.mivra.dev/" target="_blank" rel="noopener">
+    <img alt="Mivra" src="https://www.mivra.dev/web/mivra/assets/logo/site/header-logo.png" height="52" />
   </a>
   <br/>
-  <a href="https://www.knin.net" target="_blank" rel="noopener">悠雾云数据 · Youwu Cloud Data (knin.net)</a>
+  <a href="https://www.mivra.dev/" target="_blank" rel="noopener">Mivra (mivra.dev)</a>
+</p>
+
+<p align="center">
+  Mivra 专注云服务器与物理裸机，节点覆盖香港、美国与游戏云，支持按需选配，为中小企业提供稳定可靠的算力。
 </p>
 
 <h2 align="center">开发者</h2>
@@ -194,6 +198,10 @@ OpenLess 只做一件事:**把语音变成可用的书面文字(尤其是 AI 提
 - 它不积累对话上下文;每次听写都是一次独立的清理请求。
 - 流程是:语音 → 转写 → 清理 → 插入到光标,失败时回退到剪贴板。
 - 其余的一切(模式、词典、历史、菜单栏、首页报告)都为这唯一的路径服务。
+
+## 稳定性冻结
+
+OpenLess 当前进入稳定性阶段，项目暂不接受新增产品功能或扩展现有能力的 PR。接下来的工作只聚焦于把现有版本稳定下来：漏洞修复、回归修复、安全修复、文档、测试、兼容性和发布维护可以继续提交。新的功能提案和新功能实现 PR 会暂缓或直接关闭，直到稳定性阶段结束。
 
 ## 对比
 
