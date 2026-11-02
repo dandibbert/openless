@@ -19,7 +19,16 @@ const publish = steps.find((step) => step.name === 'Create / update release');
 assert.equal(publish.with.draft, true, 'publishing to clients remains an administrator decision');
 assert(publish.with.files.includes('/latest-*.json'));
 assert(publish.with.files.includes('/*.app.tar.gz.sig'));
-const testBuild = workflow('test-macos-audio-fix.yml').jobs['macos-arm64'].steps;
+const bootstrap = workflow('test-macos-audio-fix.yml');
+assert.deepEqual(bootstrap.on.workflow_dispatch.inputs.macos_runner.options, [
+  'macos-latest',
+  'macos-15',
+]);
+assert.equal(
+  bootstrap.jobs['macos-arm64']['runs-on'],
+  "${{ inputs.macos_runner || 'macos-latest' }}",
+);
+const testBuild = bootstrap.jobs['macos-arm64'].steps;
 assert(testBuild.some((step) => step.run === 'node scripts/verify-updater-signing.mjs'));
 assert(
   testBuild.find((step) => step.run === 'bash scripts/build-mac.sh').env.TAURI_SIGNING_PRIVATE_KEY,

@@ -5,14 +5,20 @@ on:
     branches:
       - fix/macos-webkit-audio-20261027
   workflow_dispatch:
+    inputs:
+      macos_runner:
+        description: ARM64 runner pool for the bootstrap DMG
+        type: choice
+        options: [macos-latest, macos-15]
+        default: macos-latest
 
 permissions:
   contents: read
 
 jobs:
   macos-arm64:
-    # Use the macOS 15 ARM64 pool while macos-latest jobs are waiting for capacity.
-    runs-on: macos-15
+    # Both choices build Apple Silicon; let an administrator switch hosted pools.
+    runs-on: ${{ inputs.macos_runner || 'macos-latest' }}
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
