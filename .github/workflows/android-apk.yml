@@ -490,6 +490,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          node scripts/verify-updater-signing.mjs
           out_dir="${{ steps.stage.outputs.out_dir }}"
           version="$(node -p "require('./package.json').version")"
           node scripts/sign-android-apks.mjs \

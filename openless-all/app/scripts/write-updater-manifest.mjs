@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { verifyUpdaterArtifact } from './updater-signature.mjs';
 
 const target = process.env.OPENLESS_UPDATE_TARGET;
 const arch = process.env.OPENLESS_UPDATE_ARCH;
@@ -20,12 +21,23 @@ const releaseTag = process.env.OPENLESS_RELEASE_TAG || '';
 if (rawChannel === 'beta' && !releaseTag) {
   throw new Error('OPENLESS_RELEASE_TAG is required when OPENLESS_RELEASE_CHANNEL=beta');
 }
+const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+const tauriConfig = JSON.parse(
+  readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'),
+);
+if (tauriConfig.version !== packageJson.version) {
+  throw new Error('Application and updater manifest versions must match');
+}
+if (rawChannel === 'stable' && packageJson.version.split('+')[0].includes('-')) {
+  throw new Error('A prerelease application cannot be published to the Stable updater channel');
+}
+if (releaseTag && releaseTag !== `v${packageJson.version.split('+')[0]}-tauri`) {
+  throw new Error('Release tag must match the application version (without build metadata)');
+}
 
 if (!target || !arch) {
   throw new Error('OPENLESS_UPDATE_TARGET and OPENLESS_UPDATE_ARCH are required');
 }
-
-const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 /** Map Gradle ABI folder names to updater manifest arch (Tauri {{arch}} convention). */
 const ANDROID_ABI_TO_ARCH = {
@@ -109,19 +121,25 @@ if (!existsSync(signaturePath)) {
 }
 
 const assetName = basename(artifact);
+const signature = readFileSync(signaturePath, 'utf8').trim();
+await verifyUpdaterArtifact(
+  artifact,
+  signature,
+  tauriConfig.plugins.updater.pubkey,
+  packageJson.version,
+);
 const manifestName = `latest-${target}-${arch}${channelSuffix}.json`;
 const mirrorManifestName = `latest-${target}-${arch}${channelSuffix}-mirror.json`;
-const downloadPath =
-  rawChannel === 'beta'
-    ? `releases/download/${releaseTag}/${assetName}`
-    : `releases/latest/download/${assetName}`;
+const downloadPath = releaseTag
+  ? `releases/download/${releaseTag}/${assetName}`
+  : `releases/latest/download/${assetName}`;
 const githubAssetUrl = `https://github.com/${repo}/${downloadPath}`;
 const mirrorAssetUrl = `${mirrorBaseUrl.replace(/\/$/, '')}/${repo}/${downloadPath}`;
 const manifest = {
   version: packageJson.version,
   pub_date: new Date().toISOString(),
   url: githubAssetUrl,
-  signature: readFileSync(signaturePath, 'utf8').trim(),
+  signature,
 };
 const mirrorManifest = {
   ...manifest,

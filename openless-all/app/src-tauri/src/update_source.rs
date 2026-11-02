@@ -3,7 +3,8 @@
 //! Upstream moved manifests to dl.aeoform.com, but this fork does not publish
 //! to that CDN. Keep Stable on the fork's latest GitHub Release, and Beta on
 //! the latest *tagged* prerelease. Each has a mirror followed by a direct URL.
-//! Both still use the existing Tauri/minisign signing key.
+//! Both require signatures from this fork's own Tauri/minisign key. The initial
+//! switch away from the inherited upstream key requires a manual installation.
 
 use crate::types::UpdateChannel;
 

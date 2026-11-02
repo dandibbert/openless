@@ -30,11 +30,28 @@ jobs:
       - name: Install dependencies
         working-directory: openless-all/app
         run: npm ci
+      - name: Verify updater signing key
+        working-directory: openless-all/app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: node scripts/verify-updater-signing.mjs
       - name: Build macOS ARM64 DMG (ad-hoc signed)
         working-directory: openless-all/app
         env:
           INSTALL: '0'
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: bash scripts/build-mac.sh
+      - name: Upload signed updater bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenLess-macOS-arm64-updater-test
+          path: |
+            openless-all/app/src-tauri/target/release/bundle/macos/*.app.tar.gz
+            openless-all/app/src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
+          if-no-files-found: error
+          retention-days: 7
       - name: Upload test DMG
         uses: actions/upload-artifact@v4
         with:

@@ -169,30 +169,18 @@ The script takes a plain `X.Y.Z`; for a prerelease version such as
    draft (Beta as a prerelease; Stable as latest).
    Do not rerun an asset workflow after publication without first returning the release to draft.
 
-   The workflows also write the channel updater manifests (`latest-{target}-{arch}.json` and
-   `latest-{target}-{arch}-beta.json`) but deliberately keep them **out** of the release assets —
-   current clients read the CDN, not the release. Download them from the run and publish them to
-   the CDN as part of publishing the release:
+   This fork attaches the channel updater manifests (`latest-{target}-{arch}.json`,
+   `latest-{target}-{arch}-beta.json`, and their `-mirror` variants) **to the GitHub
+   Release**, alongside the updater packages and `.sig` files. It does not use the
+   upstream CDN. Stable clients discover the latest non-prerelease; Beta clients
+   discover a published Beta tag. Artifact URLs inside both manifests pin the
+   release tag so publishing another release cannot swap a download mid-update.
 
-   | platform | workflow artifact |
-   | --- | --- |
-   | macOS | `openless-macos-<arch>-updater` |
-   | Windows | `openless-windows-x64-updater` |
-   | Android | `openless-android-updater-manifests` |
-
-   Destination (overwrite in place; the file name is per platform and channel, never per
-   version):
-
-   ```text
-   https://dl.aeoform.com/updates/stable/latest-{target}-{arch}.json
-   https://dl.aeoform.com/updates/beta/latest-{target}-{arch}-beta.json
-   ```
-
-   Their `url` fields must point at the CDN artifacts (`.../releases/{tag}/{asset}`).
-   Manifest upload is the step that makes a release reachable by auto-update: a published
-   release whose manifests were not synced is downloadable by hand but invisible to the updater.
-   Clients built before the CDN switch read the old `releases/latest/download/latest-*.json`
-   assets, which new releases no longer carry, so they need one manual download.
+   The desktop workflow rejects missing or mismatched updater signing credentials
+   before building a release. The manifest writer verifies each artifact's
+   signature against the application's embedded public key before producing the
+   feed. A green test DMG build or an unpublished draft is **not** an available
+   automatic update. See [the fork updater setup](docs/fork-auto-updates.md).
 7. Publishing Stable with the administrator's CLI/UI credential automatically
    triggers `sync-homebrew-cask.yml`. It accepts only the published latest Stable
    tag, preserves application build metadata in DMG filenames, verifies matching

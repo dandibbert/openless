@@ -176,14 +176,10 @@ jobs:
         run: npm ci
 
       - name: Check updater signing availability
-        if: env.OPENLESS_RELEASE_IS_TAG == 'true'
+        if: env.OPENLESS_RELEASE_IS_TAG == 'true' || env.TAURI_SIGNING_PRIVATE_KEY != ''
+        working-directory: openless-all/app
         shell: bash
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: |
-          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not configured. Publishing unsigned installers; auto-update signatures and manifests will be skipped."
-          fi
+        run: node scripts/verify-updater-signing.mjs
 
       - name: Check Apple signing availability
         if: startsWith(matrix.platform, 'macos') && env.OPENLESS_RELEASE_IS_TAG == 'true'
@@ -533,7 +529,7 @@ jobs:
           fi
 
       - name: Write updater manifest
-        if: env.TAURI_SIGNING_PRIVATE_KEY != ''
+        if: env.TAURI_SIGNING_PRIVATE_KEY != '' && env.OPENLESS_RELEASE_IS_TAG == 'true'
         shell: bash
         working-directory: 'openless-all/app'
         env:
@@ -544,7 +540,7 @@ jobs:
           OPENLESS_UPDATE_MIRROR_BASE_URL: https://fastgit.cc/https://github.com
           # On the beta channel output latest-{tgt}-{arch}-beta.json; stable keeps the old filename.
           OPENLESS_RELEASE_CHANNEL: ${{ env.OPENLESS_RELEASE_CHANNEL }}
-          # Beta points to its own tag, Stable points to releases/latest.
+          # Both channels pin artifact downloads to the immutable release tag.
           OPENLESS_RELEASE_TAG: ${{ env.OPENLESS_RELEASE_TAG }}
         run: node scripts/write-updater-manifest.mjs
 
