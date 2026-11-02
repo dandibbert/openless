@@ -294,7 +294,7 @@ impl XfyunStreamingASR {
     pub async fn send_last_frame(&self) -> Result<(), XfyunASRError> {
         // Never let end-of-audio overtake queued replay frames.
         let drain_deadline =
-            Instant::now() + super::streaming::drain_timeout(self.state.lock().bytes_sent as u64);
+            Instant::now() + super::streaming::drain_timeout(self.state.lock().bytes_sent);
         while self.pending_sends.load(Ordering::SeqCst) > 0 {
             if self.state.lock().finished {
                 return Err(XfyunASRError::NoFinalResult);
@@ -338,7 +338,7 @@ impl XfyunStreamingASR {
         // Wait for the tail audio to be sent too, then send the end marker (contents
         // per the docs; must be a binary message).
         let drain_deadline =
-            Instant::now() + super::streaming::drain_timeout(self.state.lock().bytes_sent as u64);
+            Instant::now() + super::streaming::drain_timeout(self.state.lock().bytes_sent);
         while self.pending_sends.load(Ordering::SeqCst) > 0 {
             if self.state.lock().finished {
                 return Err(XfyunASRError::NoFinalResult);
@@ -363,7 +363,7 @@ impl XfyunStreamingASR {
     }
 
     pub async fn await_final_result(&self) -> Result<RawTranscript, XfyunASRError> {
-        let bytes = self.state.lock().bytes_sent as u64;
+        let bytes = self.state.lock().bytes_sent;
         self.await_final_result_with_timeout(super::streaming::final_timeout(bytes))
             .await
     }

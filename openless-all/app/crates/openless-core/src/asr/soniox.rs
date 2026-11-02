@@ -273,9 +273,8 @@ impl SonioxStreamingASR {
             ),
         )
         .await
-        .map_err(|error| {
+        .inspect_err(|error| {
             self.finish_error(SonioxASRError::SendFailed(error.to_string()));
-            error
         })?;
         self.state.lock().config_sent = true;
 

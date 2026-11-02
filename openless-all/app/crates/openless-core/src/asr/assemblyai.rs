@@ -688,16 +688,17 @@ mod tests {
         let endpoint = format!("ws://{}/v3/ws", listener.local_addr().unwrap());
         let server = tokio::spawn(async move {
             let (socket, _) = listener.accept().await.unwrap();
-            let mut ws = tokio_tungstenite::accept_hdr_async(
-                socket,
+            // Tungstenite's Callback API requires an unboxed ErrorResponse.
+            #[allow(clippy::result_large_err)]
+            let check_request =
                 |request: &tokio_tungstenite::tungstenite::handshake::server::Request, response| {
                     assert_eq!(request.headers()["Authorization"], "test-key");
                     assert!(request.uri().query().unwrap().contains("speech_model="));
                     Ok(response)
-                },
-            )
-            .await
-            .unwrap();
+                };
+            let mut ws = tokio_tungstenite::accept_hdr_async(socket, check_request)
+                .await
+                .unwrap();
             ws.send(Message::Text(
                 json!({"type": "Begin", "id": "test"}).to_string().into(),
             ))
@@ -758,27 +759,45 @@ mod tests {
         let server = tokio::spawn(async move {
             let (socket, _) = listener.accept().await.unwrap();
             let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
-            ws.send(Message::Text(json!({"type": "Begin"}).to_string().into())).await.unwrap();
+            ws.send(Message::Text(json!({"type": "Begin"}).to_string().into()))
+                .await
+                .unwrap();
             let mut received = 0;
             while let Some(message) = ws.next().await {
                 match message.unwrap() {
                     Message::Binary(audio) => received += audio.len(),
                     Message::Text(text) => {
-                        assert_eq!(serde_json::from_str::<Value>(&text).unwrap()["type"], "Terminate");
+                        assert_eq!(
+                            serde_json::from_str::<Value>(&text).unwrap()["type"],
+                            "Terminate"
+                        );
                         break;
                     }
                     other => panic!("unexpected message {other:?}"),
                 }
             }
             assert_eq!(received, bytes);
-            ws.send(Message::Text(turn(0, "All audio received.", true, true).to_string().into())).await.unwrap();
-            ws.send(Message::Text(json!({"type": "Termination"}).to_string().into())).await.unwrap();
+            ws.send(Message::Text(
+                turn(0, "All audio received.", true, true)
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+            ws.send(Message::Text(
+                json!({"type": "Termination"}).to_string().into(),
+            ))
+            .await
+            .unwrap();
         });
         let asr = Arc::new(AssemblyAiStreamingASR::new(creds));
         asr.open_session().await.unwrap();
         asr.consume_pcm_chunk(&vec![1; bytes]);
         asr.send_last_frame().await.unwrap();
-        assert_eq!(asr.await_final_result().await.unwrap().text, "All audio received.");
+        assert_eq!(
+            asr.await_final_result().await.unwrap().text,
+            "All audio received."
+        );
         server.await.unwrap();
     }
 
