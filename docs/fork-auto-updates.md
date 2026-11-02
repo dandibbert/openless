@@ -54,8 +54,11 @@ keys with the wrong public half fail without logging private material.
 
 An ordinary push to `beta` does not publish an update. The manual
 `Test macOS WebKit audio fix DMG` workflow produces an ARM64 DMG and a signed
-updater archive as Actions artifacts. It is useful for bootstrap testing but
-does not put a release or manifest in the public feed.
+updater archive as Actions artifacts. It also verifies that archive's actual
+signature, prepares tag-pinned direct/mirror manifests, and includes the source
+commit and application version in `updater-build-provenance.json`. These files
+are ready for an administrator to inspect, but the test workflow does not create
+a tag or put a release or manifest in the public feed.
 
 Only an administrator may cut a public release, following `RELEASING.md` and
 the relevant platform acceptance gates. Release tags omit build metadata:

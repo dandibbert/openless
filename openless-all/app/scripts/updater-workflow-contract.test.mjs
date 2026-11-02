@@ -24,6 +24,20 @@ assert(testBuild.some((step) => step.run === 'node scripts/verify-updater-signin
 assert(
   testBuild.find((step) => step.run === 'bash scripts/build-mac.sh').env.TAURI_SIGNING_PRIVATE_KEY,
 );
+const stage = testBuild.find((step) => step.name === 'Verify and stage updater manifests');
+assert.equal(stage.env.OPENLESS_UPDATE_TARGET, 'darwin');
+assert.equal(stage.env.OPENLESS_UPDATE_ARCH, 'aarch64');
+assert.match(stage.run, /node scripts\/write-updater-manifest\.mjs/);
+assert.match(stage.run, /sourceSha: process\.env\.GITHUB_SHA/);
+assert.match(stage.run, /OPENLESS_RELEASE_TAG="v\$\{version%%\+\*\}-tauri"/);
+const upload = testBuild.find((step) => step.name === 'Upload signed updater bundle');
+assert.match(upload.with.path, /latest-darwin-aarch64\*\.json/);
+assert.match(upload.with.path, /updater-build-provenance\.json/);
+assert(testBuild.indexOf(stage) < testBuild.indexOf(upload));
+assert(
+  testBuild.indexOf(testBuild.find((step) => step.name === 'Configure macOS')) <
+    testBuild.findIndex((step) => step.uses?.startsWith('swatinem/rust-cache@')),
+);
 assert(
   !testBuild.some((step) => step.uses?.includes('action-gh-release')),
   'test builds must not be published',

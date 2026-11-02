@@ -27,6 +27,12 @@ jobs:
       - name: Configure macOS
         working-directory: openless-all/app
         run: bash scripts/macos-build-env.sh
+      - name: Restore macOS release dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          shared-key: tauri-macos
+          workspaces: openless-all/app/src-tauri -> target
+          save-if: ${{ github.ref == 'refs/heads/beta' }}
       - name: Install dependencies
         working-directory: openless-all/app
         run: npm ci
@@ -43,6 +49,42 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: bash scripts/build-mac.sh
+      - name: Verify and stage updater manifests
+        working-directory: openless-all/app
+        env:
+          OPENLESS_UPDATE_TARGET: darwin
+          OPENLESS_UPDATE_ARCH: aarch64
+          OPENLESS_UPDATE_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          export OPENLESS_RELEASE_TAG="v${version%%+*}-tauri"
+          if [[ "${version%%+*}" == *-Beta.* ]]; then
+            export OPENLESS_RELEASE_CHANNEL=beta
+          elif [[ "${version%%+*}" != *-* ]]; then
+            export OPENLESS_RELEASE_CHANNEL=stable
+          else
+            echo "::error::Unsupported prerelease channel: $version"
+            exit 1
+          fi
+          bundle=src-tauri/target/release/bundle
+          mv "$bundle/macos/OpenLess.app.tar.gz" "$bundle/macos/OpenLess_aarch64.app.tar.gz"
+          mv "$bundle/macos/OpenLess.app.tar.gz.sig" "$bundle/macos/OpenLess_aarch64.app.tar.gz.sig"
+          node scripts/write-updater-manifest.mjs
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
+          const provenance = {
+            repository: process.env.GITHUB_REPOSITORY,
+            version,
+            sourceSha: process.env.GITHUB_SHA,
+            releaseTag: process.env.OPENLESS_RELEASE_TAG,
+            workflowRunId: process.env.GITHUB_RUN_ID,
+            target: 'darwin',
+            arch: 'aarch64',
+          };
+          writeFileSync('src-tauri/target/release/bundle/updater-build-provenance.json', JSON.stringify(provenance, null, 2) + '\n');
+          NODE
       - name: Upload signed updater bundle
         uses: actions/upload-artifact@v4
         with:
@@ -50,6 +92,8 @@ jobs:
           path: |
             openless-all/app/src-tauri/target/release/bundle/macos/*.app.tar.gz
             openless-all/app/src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
+            openless-all/app/src-tauri/target/release/bundle/latest-darwin-aarch64*.json
+            openless-all/app/src-tauri/target/release/bundle/updater-build-provenance.json
           if-no-files-found: error
           retention-days: 7
       - name: Upload test DMG
