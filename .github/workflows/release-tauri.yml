@@ -742,8 +742,8 @@ jobs:
   # Read-only builds upload artifacts. This job is the only contents: write path.
   # It runs for a tag push or a targeted draft repair, including when one matrix
   # leg failed, so a good platform can still attach. A cancelled build publishes
-  # nothing. Updater manifests stay in the `*-updater` artifacts for the CDN and
-  # are not copied into the release.
+  # nothing. This fork also copies latest-*.json into the GitHub Release so the
+  # in-app updater can read them; it does not publish to the upstream CDN.
   publish:
     name: Publish Tauri release
     needs: build

@@ -23,8 +23,14 @@ for (const name of ['release-tauri.yml', 'android-apk.yml']) {
   if (name === 'release-tauri.yml') {
     assert.match(
       publishers[0].with.files,
-      /bundle\/latest-\*\.json/,
-      'Tauri release must attach update manifests',
+      /release-files\/\*/,
+      'Tauri release must publish staged installers and manifests',
+    );
+    const stage = steps.find((step) => step.name === 'Stage release files');
+    assert.match(
+      stage.run,
+      /latest-\*\.json/,
+      'Tauri release must copy updater manifests into the GitHub Release',
     );
   } else {
     const collect = steps.find((step) => step.id === 'release_assets');
