@@ -27,7 +27,6 @@
   <a href="https://github.com/dandibbert/openless/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/dandibbert/openless?style=flat-square&color=2c5282" /></a>
   <a href="https://github.com/Open-Less/openless/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/Open-Less/openless?style=flat-square&color=2f855a" /></a>
   <a href="https://github.com/Open-Less/openless/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Open-Less/openless?style=flat-square&color=805ad5" /></a>
-  <a href="https://discord.gg/vTZHTFGFm"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
 </p>
 
 <p align="center">
@@ -39,7 +38,7 @@
 </p>
 
 <p align="center">
-  💬 &nbsp;<a href="https://discord.gg/vTZHTFGFm"><strong>加入 Discord 社区</strong></a> &nbsp;·&nbsp; QQ 群&nbsp; <strong>1078960553</strong>
+  QQ 群&nbsp; <strong>1078960553</strong>
 </p>
 
 <br/>
@@ -232,14 +231,14 @@ OpenLess 当前进入稳定性阶段，项目暂不接受新增产品功能或�
 - **多语言界面**——设置 → 语言 可在 简体中文 / 繁體中文 / English / 日本語 / 한국어 之间切换(首次启动自动检测)。
 - **Tauri 宿主内自动更新**——macOS、Windows 与 Android 通过 设置 → 关于 → 检查 获取签名产物；Linux deb/rpm 不提供应用内更新或 AppImage 更新清单。
 - **Beta 频道(可选加入)**——设置 → 关于与更新 → 加入 Beta 频道,切换至 Beta 更新源；也可在 Releases 下载安装包。Beta 版本绝不会自动推送给 Stable 用户(见[贡献流程](#贡献流程))。
-- **分发渠道**——从 [Releases](https://github.com/Open-Less/openless/releases) 直接下载 DMG/EXE、Homebrew Cask(须先添加项目 tap，见下方安装步骤)、Windows 安装包。Linux deb/rpm 在独立真机验收后，由管理员把已验证的包附到已有 Release。
+- **分发渠道**——从 [Releases](https://github.com/dandibbert/openless/releases) 直接下载 DMG/EXE、Homebrew Cask(须先添加项目 tap，见下方安装步骤)、Windows 安装包。Linux deb/rpm 在独立真机验收后，由管理员把已验证的包附到已有 Release。
 - **单实例锁**——防止两个 OpenLess 进程争抢同一个快捷键边沿。
 - 词典条目注入到支持热词的 ASR 提供方(Volcengine 的 `context.hotwords`、StepFun 的 `hotwords`、Whisper 兼容的 `prompt`(ZenMux 除外——其 JSON 协议不携带 `prompt`/`hotwords`)、百炼的 vocabulary_id),并在润色时作为语义提示;命中次数按会话累计。讯飞实时语音转写标准版没有请求级热词参数,需在讯飞控制台配置个性化热词。
 - 平台原生全局快捷键:macOS 上为 CGEventTap,Windows 上为低级键盘钩子(`WH_KEYBOARD_LL`)。
 
 ## 下载与安装(终端用户)
 
-前往 [Releases](https://github.com/Open-Less/openless/releases) 下载:
+前往 [Releases](https://github.com/dandibbert/openless/releases) 下载:
 
 - **macOS**:`OpenLess_<version>_aarch64.dmg`(Apple Silicon)或 `OpenLess_<version>_x64.dmg`(Intel)。打开后将应用拖入 `/Applications`,**然后在终端执行一次以下命令,以绕过 Gatekeeper 的“已损坏”提示**(该构建为 ad-hoc 签名,未经 Apple 公证):
   ```bash
@@ -251,7 +250,7 @@ OpenLess 当前进入稳定性阶段，项目暂不接受新增产品功能或�
   - **旧款 32 位 ARM**:`OpenLess_<version>_armeabi-v7a.apk`
   - **64 位模拟器**:`OpenLess_<version>_x86_64.apk`
   - **32 位模拟器**:`OpenLess_<version>_x86.apk`
-  - 应用内更新（设置 → 关于）读取 `https://dl.aeoform.com/updates/stable/latest-android-{arch}.json`；Beta 用户在高级设置加入 Beta 渠道，读取 `.../updates/beta/latest-android-{arch}-beta.json`。
+  - 应用内更新（设置 → 关于）读取本 fork 的 GitHub Release 清单（`latest-android-{arch}.json`）；Beta 用户在高级设置加入 Beta 渠道，读取带标签的 `latest-android-{arch}-beta.json`。
   - 调试包:`OpenLess-android-debug-{abi}-*.apk`（workflow_dispatch 产物）。
   - 不确定时执行 `adb shell getprop ro.product.cpu.abi`，下载对应 ABI 的包。
 - **Linux**：原 Tauri/WebView 构建已退出 Linux 路线。基于共享 Core 2.0 服务的原生 `eframe` 宿主经 CI 和 Ubuntu 真实音频、输入、安装、升级、回滚验收后，随共用 Release 提供 deb/rpm 和 `SHA256SUMS`。要求 glibc ≥ 2.39（Ubuntu 24.04 或同等级发行版）；没有 AppImage 或应用内更新。
@@ -347,14 +346,14 @@ your fork / topic branch
 
 Beta 发布的分发(手动下载、可选加入):应用内更新器的 Stable 渠道只读 Stable 清单路径,因此普通用户绝不会通过自动更新拿到 Beta 构建。想尝试 Beta 的用户打开 **设置 → 关于**,启用“加入 Beta 频道”,再从应用从 GitHub 获取的链接处手动下载最新的 Beta 安装包。标签约定:`v<version>-beta-tauri` 产出 Beta 发布(标记为 GitHub pre-release),而 `v<version>-tauri` 产出 Stable 发布。
 
-更新清单由项目 CDN 提供,每个平台/渠道一个滚动文件:
+本 fork 的更新清单挂在 GitHub Release（下载可用 GitHub 镜像），不使用上游 CDN:
 
 ```text
-https://dl.aeoform.com/updates/stable/latest-{target}-{arch}.json
-https://dl.aeoform.com/updates/beta/latest-{target}-{arch}-beta.json
+https://github.com/dandibbert/openless/releases/latest/download/latest-{target}-{arch}.json
+https://github.com/dandibbert/openless/releases/download/<tag>/latest-{target}-{arch}-beta.json
 ```
 
-渠道隔离就是 URL 路径(`/updates/stable/` vs `/updates/beta/`),Stable 客户端即使请求错地址也拿不到 Beta 清单。清单里的下载地址同样指向 CDN(`https://dl.aeoform.com/releases/{tag}/{asset}`),国内用户直接从这里下载。清单由发布 workflow 生成为运行产物(run artifact),**不再挂到 GitHub Release**;因此发版后需要维护者手动把清单上传到 CDN,见 `RELEASING.md`。改动前装的客户端读的是旧的 `releases/latest/download/latest-*.json`,因此无法自动更新到最后一个还带这些文件的版本之后,需要手动下载一次。
+Stable 读 `releases/latest`；Beta 读带标签的预发布。清单里的下载地址固定到该 GitHub Release。详见 `docs/fork-auto-updates.md` 与 `RELEASING.md`。
 
 ## 凭据
 
@@ -433,6 +432,30 @@ egui UI  ── Linux Adapter（无 Tauri/WebKitGTK）───┘
 `v<version>-tauri` / `v<version>-Beta.N-tauri` 工作流构建 macOS、Windows、Android 宿主以及独立的 Linux egui deb/rpm。Linux 真机验收完成、管理员创建 tag 后，验证过的 Linux 包自动附到共用 Release；Beta 资产先留在草稿中供管理员核对发布。Linux 不提供 AppImage 或应用内更新清单。
 
 听写流水线:`hotkey edge → Recorder.start + ASR.openSession → [audio frames] → hotkey edge → Recorder.stop + ASR.sendLastFrame → Polish → Insert → History.save`。
+
+### 客户端架构与流程图
+
+下面的图来自当前 `beta` 客户端边界。每张渲染图都保留了可编辑的 Mermaid 源文件和 SVG 版本，便于后续更新与审查。
+
+#### 客户端架构
+
+![OpenLess 客户端架构图](docs/images/client-diagrams/openless-client-architecture.zh-CN.png)
+
+[Mermaid 源文件](docs/images/client-diagrams/openless-client-architecture.zh-CN.mmd) · [SVG](docs/images/client-diagrams/openless-client-architecture.zh-CN.svg) · [英文图](docs/images/client-diagrams/openless-client-architecture.png) · [英文 Mermaid](docs/images/client-diagrams/openless-client-architecture.mmd) · [英文 SVG](docs/images/client-diagrams/openless-client-architecture.svg)
+
+#### 客户端数据流
+
+![OpenLess 客户端数据流图](docs/images/client-diagrams/openless-client-data-flow.zh-CN.png)
+
+[Mermaid 源文件](docs/images/client-diagrams/openless-client-data-flow.zh-CN.mmd) · [SVG](docs/images/client-diagrams/openless-client-data-flow.zh-CN.svg) · [英文图](docs/images/client-diagrams/openless-client-data-flow.png) · [英文 Mermaid](docs/images/client-diagrams/openless-client-data-flow.mmd) · [英文 SVG](docs/images/client-diagrams/openless-client-data-flow.svg)
+
+#### 启动、权限与录音流程
+
+![OpenLess 启动、权限与录音流程图](docs/images/client-diagrams/openless-client-startup-recording-flow.zh-CN.png)
+
+[Mermaid 源文件](docs/images/client-diagrams/openless-client-startup-recording-flow.zh-CN.mmd) · [SVG](docs/images/client-diagrams/openless-client-startup-recording-flow.zh-CN.svg) · [英文图](docs/images/client-diagrams/openless-client-startup-recording-flow.png) · [英文 Mermaid](docs/images/client-diagrams/openless-client-startup-recording-flow.mmd) · [英文 SVG](docs/images/client-diagrams/openless-client-startup-recording-flow.svg)
+
+配套的依赖与模块审查记录见 [`docs/images/client-diagrams/openless-client-dependency-module-review.md`](docs/images/client-diagrams/openless-client-dependency-module-review.md)。
 
 贡献与发布规则见[贡献流程](#贡献流程)和[发布规范](RELEASING.md)，模块职责与接线见[架构文档](docs/architecture.md)。
 

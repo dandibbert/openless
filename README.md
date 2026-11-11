@@ -27,7 +27,6 @@
   <a href="https://github.com/dandibbert/openless/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/dandibbert/openless?style=flat-square&color=2c5282" /></a>
   <a href="https://github.com/Open-Less/openless/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/Open-Less/openless?style=flat-square&color=2f855a" /></a>
   <a href="https://github.com/Open-Less/openless/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Open-Less/openless?style=flat-square&color=805ad5" /></a>
-  <a href="https://discord.gg/vTZHTFGFm"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
 </p>
 
 <p align="center">
@@ -39,7 +38,7 @@
 </p>
 
 <p align="center">
-  💬 &nbsp;<a href="https://discord.gg/vTZHTFGFm"><strong>Join our Discord</strong></a> &nbsp;·&nbsp; QQ Group&nbsp; <strong>1078960553</strong>
+  QQ Group&nbsp; <strong>1078960553</strong>
 </p>
 
 <br/>
@@ -225,14 +224,14 @@ Every item below is one more layer sedimented into a default — a capability yo
 - **Multilingual UI** — Settings → Language switches between 简体中文 / 繁體中文 / English / 日本語 / 한국어 (auto-detected on first launch).
 - **In-app auto-update on the Tauri hosts** — Settings → About → Check; signed updater artifacts via the Tauri updater plugin on macOS, Windows, and Android. Linux deb/rpm packages have no in-app updater or AppImage manifest.
 - **Beta channel (opt-in)** — Settings → About & updates → Join Beta channel selects the Beta updater feed; packages are also available from Releases. Beta releases never reach Stable users automatically (see [Contributing workflow](#contributing-workflow)).
-- **Distribution channels** — direct DMG/EXE from [Releases](https://github.com/Open-Less/openless/releases), Homebrew Cask (add the project tap first; see installation below), and a Windows installer. Linux deb/rpm packages require independent device acceptance and an explicit administrator upload to an existing Release.
+- **Distribution channels** — direct DMG/EXE from [Releases](https://github.com/dandibbert/openless/releases), Homebrew Cask (add the project tap first; see installation below), and a Windows installer. Linux deb/rpm packages require independent device acceptance and an explicit administrator upload to an existing Release.
 - **Single-instance lock** — prevents two OpenLess processes from racing the same hotkey edge.
 - Dictionary entries are injected as Volcengine ASR `context.hotwords` and as semantic hints during polish; hits accumulate per session.
 - Platform-native global hotkey: CGEventTap on macOS, low-level keyboard hook (`WH_KEYBOARD_LL`) on Windows.
 
 ## Download & install (end users)
 
-Go to [Releases](https://github.com/Open-Less/openless/releases) and download:
+Go to [Releases](https://github.com/dandibbert/openless/releases) and download:
 
 - **macOS**: `OpenLess_<version>_aarch64.dmg` (Apple Silicon) or `OpenLess_<version>_x64.dmg` (Intel). Open it, drag the app to `/Applications`, **then run the following once in Terminal to bypass the Gatekeeper "damaged" warning** (the build is ad-hoc signed, not Apple-notarized):
   ```bash
@@ -244,7 +243,7 @@ Go to [Releases](https://github.com/Open-Less/openless/releases) and download:
   - **Older 32-bit ARM**: `OpenLess_<version>_armeabi-v7a.apk`
   - **64-bit emulator**: `OpenLess_<version>_x86_64.apk`
   - **32-bit emulator**: `OpenLess_<version>_x86.apk`
-  - In-app updates (Settings → About) read `https://dl.aeoform.com/updates/stable/latest-android-{arch}.json`; Beta users join Beta in Advanced settings and read the `.../updates/beta/latest-android-{arch}-beta.json` counterpart.
+  - In-app updates (Settings → About) read this fork's GitHub Release manifests (`latest-android-{arch}.json`); Beta users join Beta in Advanced settings and read the tagged `latest-android-{arch}-beta.json` counterpart.
   - Debug smoke builds: `OpenLess-android-debug-{abi}-*.apk` from workflow_dispatch artifacts.
   - If unsure, run `adb shell getprop ro.product.cpu.abi` and pick the matching APK.
 - **Linux**: the Tauri/WebView build has been retired. The native `eframe` host uses the shared Core 2.0 services. After CI and real Ubuntu audio, input, install, upgrade and rollback acceptance, the shared release includes deb/rpm packages and `SHA256SUMS`. Linux requires glibc ≥ 2.39 (Ubuntu 24.04 or a comparable distribution); there is no AppImage or in-app updater.
@@ -340,14 +339,14 @@ Rules of thumb:
 
 Beta release distribution (manual-download opt-in): the in-app updater's Stable channel only ever reads the Stable manifest path, so regular users never receive Beta builds via auto-update. Users who want to try Beta open **Settings → About**, enable "Join Beta channel", and download the latest Beta installer manually from the link the app fetches from GitHub. Tag convention: `v<version>-beta-tauri` produces the Beta release (marked as a GitHub pre-release), while `v<version>-tauri` produces the Stable release.
 
-Updater manifests are served from the project CDN, one rolling file per platform and channel:
+This fork serves updater manifests from GitHub Releases (with a GitHub mirror for downloads), not the upstream CDN:
 
 ```text
-https://dl.aeoform.com/updates/stable/latest-{target}-{arch}.json
-https://dl.aeoform.com/updates/beta/latest-{target}-{arch}-beta.json
+https://github.com/dandibbert/openless/releases/latest/download/latest-{target}-{arch}.json
+https://github.com/dandibbert/openless/releases/download/<tag>/latest-{target}-{arch}-beta.json
 ```
 
-The channel split is the URL path (`/updates/stable/` vs `/updates/beta/`), so a Stable client cannot reach a Beta manifest even if it asked for the wrong URL. Artifact URLs inside the manifest point at the same CDN (`https://dl.aeoform.com/releases/{tag}/{asset}`), which is what mainland-China users download from. The manifests are generated by the release workflows as run artifacts and are **not** attached to the GitHub Release, so maintainers must upload them to the CDN after a build — see `RELEASING.md`. Clients built before this switch read the old `releases/latest/download/latest-*.json` assets and therefore cannot auto-update past the last release that still carries them; they need one manual download.
+Stable reads `releases/latest`; Beta reads a tagged prerelease. Artifact URLs inside the manifests pin that GitHub Release. See `docs/fork-auto-updates.md` and `RELEASING.md`.
 
 ## Credentials
 
@@ -426,6 +425,30 @@ egui UI  ── Linux Adapter (no Tauri/WebKitGTK) ────┘
 The `v<version>-tauri` / `v<version>-Beta.N-tauri` workflows build the macOS, Windows and Android hosts alongside the independent Linux egui deb/rpm workflow. After Linux device acceptance and an admin's tag, verified Linux packages attach to the shared Release; Beta assets remain in a draft until an admin publishes them. Linux has no AppImage or in-app updater manifest.
 
 The dictation pipeline: `hotkey edge → Recorder.start + ASR.openSession → [audio frames] → hotkey edge → Recorder.stop + ASR.sendLastFrame → Polish → Insert → History.save`.
+
+### Client architecture and flows
+
+The diagrams below are generated from the current `beta` client boundaries. Each rendered PNG is accompanied by an editable Mermaid source and an SVG version.
+
+#### Architecture
+
+![OpenLess client architecture](docs/images/client-diagrams/openless-client-architecture.png)
+
+[Mermaid source](docs/images/client-diagrams/openless-client-architecture.mmd) · [SVG](docs/images/client-diagrams/openless-client-architecture.svg) · [中文图](docs/images/client-diagrams/openless-client-architecture.zh-CN.png) · [中文 Mermaid](docs/images/client-diagrams/openless-client-architecture.zh-CN.mmd) · [中文 SVG](docs/images/client-diagrams/openless-client-architecture.zh-CN.svg)
+
+#### Data flow
+
+![OpenLess client data flow](docs/images/client-diagrams/openless-client-data-flow.png)
+
+[Mermaid source](docs/images/client-diagrams/openless-client-data-flow.mmd) · [SVG](docs/images/client-diagrams/openless-client-data-flow.svg) · [中文图](docs/images/client-diagrams/openless-client-data-flow.zh-CN.png) · [中文 Mermaid](docs/images/client-diagrams/openless-client-data-flow.zh-CN.mmd) · [中文 SVG](docs/images/client-diagrams/openless-client-data-flow.zh-CN.svg)
+
+#### Startup, permissions, and recording
+
+![OpenLess startup, permissions, and recording flow](docs/images/client-diagrams/openless-client-startup-recording-flow.png)
+
+[Mermaid source](docs/images/client-diagrams/openless-client-startup-recording-flow.mmd) · [SVG](docs/images/client-diagrams/openless-client-startup-recording-flow.svg) · [中文图](docs/images/client-diagrams/openless-client-startup-recording-flow.zh-CN.png) · [中文 Mermaid](docs/images/client-diagrams/openless-client-startup-recording-flow.zh-CN.mmd) · [中文 SVG](docs/images/client-diagrams/openless-client-startup-recording-flow.zh-CN.svg)
+
+The dependency and module review that accompanies these diagrams is in [`docs/images/client-diagrams/openless-client-dependency-module-review.md`](docs/images/client-diagrams/openless-client-dependency-module-review.md).
 
 See [Contributing workflow](#contributing-workflow) and [Releasing](RELEASING.md) for contribution and release rules, and [Architecture](docs/architecture.md) for module responsibilities and wiring.
 
