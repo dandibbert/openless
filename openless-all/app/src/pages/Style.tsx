@@ -173,6 +173,7 @@ export function Style() {
   const [busy, setBusy] = useState<BusyAction>('loading');
   const [saveState, setSaveState] = useState<SaveToastState>('idle');
   const [saveMessage, setSaveMessage] = useState('');
+  const [saveReplay, setSaveReplay] = useState(0);
   const statusTimer = useRef<number | null>(null);
   const pendingDeletes = useRef(
     new Map<string, { pack: StylePack; timer: number; index: number; committing: boolean }>(),
@@ -223,6 +224,7 @@ export function Style() {
     }
     setSaveState(state);
     setSaveMessage(message);
+    setSaveReplay((current) => current + 1);
     // Auto-dismiss: success/info default to ~1.6s; failure gets longer so users can read it
     // (6s). The "saving" in-progress state never auto-dismisses (waits for a real terminal
     // state to overwrite it).
@@ -236,7 +238,7 @@ export function Style() {
     }
   };
 
-  const loadPacks = async (preferredId?: string | null) => {
+  const loadPacks = async (preferredId?: string | null, notify = false) => {
     const sequence = ++loadSequence.current;
     const initialLoad = !packsLoaded.current;
     if (initialLoad) setBusy('loading');
@@ -253,6 +255,7 @@ export function Style() {
         next[0]?.id ||
         null;
       setSelectedId(nextSelectedId);
+      if (notify) showSaveStatus('saved', t('common.refreshed'), true);
     } catch (loadError) {
       if (sequence === loadSequence.current)
         showSaveStatus('failed', t('style.pack.loadFailed', { err: String(loadError) }));
@@ -811,7 +814,7 @@ export function Style() {
             <Btn
               variant="ghost"
               icon="refresh"
-              onClick={() => void loadPacks(selectedId)}
+              onClick={() => void loadPacks(selectedId, true)}
               disabled={busy === 'loading'}
             >
               {t('common.refresh')}
@@ -833,6 +836,7 @@ export function Style() {
           buttons for long. */}
       <SavedToast
         saveState={undoDelete ? 'saved' : saveState}
+        replayKey={saveReplay}
         message={
           undoDelete ? t('style.pack.deleteSuccess', { name: undoDelete.name }) : saveMessage
         }
@@ -909,7 +913,7 @@ export function Style() {
                     alignItems: 'center',
                     gap: 6,
                     padding: '6px 12px',
-                    borderRadius: 999,
+                    borderRadius: 'var(--ol-radius)',
                     border: '0.5px solid',
                     borderColor: 'var(--ol-line-strong)',
                     background: rawPack.active ? 'var(--ol-style-card-bg-active)' : 'transparent',
@@ -999,14 +1003,9 @@ export function Style() {
                       flexDirection: 'column',
                       textAlign: 'left',
                       position: 'relative',
-                      border: isCurrentForView ? '1.5px solid' : '0.5px solid',
-                      borderColor: isCurrentForView
-                        ? 'var(--ol-style-card-border-active)'
-                        : 'var(--ol-style-card-border)',
-                      background: isCurrentForView
-                        ? 'var(--ol-style-card-bg-active)'
-                        : 'var(--ol-style-card-bg)',
-                      borderRadius: 14,
+                      border: 0,
+                      background: isCurrentForView ? 'var(--ol-blue-soft)' : 'var(--ol-surface)',
+                      borderRadius: 'var(--ol-r-lg)',
                       padding: 16,
                       boxShadow: 'none',
                       cursor: 'default',
@@ -1195,7 +1194,7 @@ export function Style() {
                   gap: 8,
                   textAlign: 'center',
                   border: '0.5px dashed var(--ol-line-strong)',
-                  borderRadius: 14,
+                  borderRadius: 'var(--ol-r-lg)',
                   padding: 16,
                   background: 'transparent',
                   color: 'var(--ol-ink-3)',
@@ -1210,7 +1209,7 @@ export function Style() {
                   style={{
                     width: 44,
                     height: 44,
-                    borderRadius: 999,
+                    borderRadius: 'var(--ol-radius)',
                     display: 'inline-flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -1276,7 +1275,7 @@ export function Style() {
               initial={{ x: '100%', opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: '100%', opacity: 0 }}
-              transition={{ type: 'spring', damping: 26, stiffness: 280 }}
+              transition={{ type: 'spring', damping: 36, stiffness: 280 }}
               style={
                 mobile
                   ? {
@@ -1345,7 +1344,7 @@ export function Style() {
                       style={{
                         width: 28,
                         height: 28,
-                        borderRadius: 999,
+                        borderRadius: 'var(--ol-radius)',
                         border: 0,
                         background: 'transparent',
                         color: 'var(--ol-ink-3)',
@@ -1738,7 +1737,7 @@ export function Style() {
                     <div
                       style={{
                         padding: 14,
-                        borderRadius: 14,
+                        borderRadius: 'var(--ol-r-lg)',
                         background: 'var(--ol-style-subtle-bg)',
                         border: '0.5px solid var(--ol-line)',
                       }}
@@ -1865,7 +1864,7 @@ export function Style() {
                                 height: 32,
                                 flexShrink: 0,
                                 border: '0.5px solid var(--ol-line-strong)',
-                                borderRadius: 8,
+                                borderRadius: 'var(--ol-control-radius)',
                                 background: 'transparent',
                                 color: 'var(--ol-ink-2)',
                                 display: 'inline-flex',
@@ -1891,7 +1890,7 @@ export function Style() {
                           >
                             <div
                               style={{
-                                borderRadius: 14,
+                                borderRadius: 'var(--ol-r-lg)',
                                 border: '0.5px solid var(--ol-line)',
                                 background: 'var(--ol-style-subtle-bg)',
                                 padding: 14,
@@ -1924,7 +1923,7 @@ export function Style() {
 
                             <div
                               style={{
-                                borderRadius: 14,
+                                borderRadius: 'var(--ol-r-lg)',
                                 border: '0.5px solid rgba(37,99,235,0.16)',
                                 background: 'var(--ol-style-subtle-bg)',
                                 padding: 14,
@@ -1973,7 +1972,7 @@ function MetaItem({ label, value }: { label: string; value: string }) {
   return (
     <div
       style={{
-        borderRadius: 12,
+        borderRadius: 'var(--ol-r-lg)',
         border: '0.5px solid var(--ol-line)',
         background: 'var(--ol-style-input-bg)',
         padding: '10px 12px',
@@ -2027,7 +2026,7 @@ function DirectiveRow({
         justifyContent: 'space-between',
         gap: 12,
         padding: '10px 12px',
-        borderRadius: 12,
+        borderRadius: 'var(--ol-r-lg)',
         border: '0.5px solid var(--ol-line)',
         background: 'var(--ol-style-input-bg)',
       }}
@@ -2058,7 +2057,7 @@ const inputStyle: CSSProperties = {
   boxSizing: 'border-box',
   minHeight: 38,
   padding: '9px 11px',
-  borderRadius: 10,
+  borderRadius: 'var(--ol-r-md)',
   border: '0.5px solid var(--ol-line-strong)',
   background: 'var(--ol-style-input-bg)',
   color: 'var(--ol-ink)',
@@ -2070,7 +2069,7 @@ const textareaStyle: CSSProperties = {
   width: '100%',
   boxSizing: 'border-box',
   padding: '11px 12px',
-  borderRadius: 12,
+  borderRadius: 'var(--ol-r-lg)',
   border: '0.5px solid var(--ol-line-strong)',
   background: 'var(--ol-style-input-bg)',
   color: 'var(--ol-ink)',

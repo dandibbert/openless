@@ -11,7 +11,10 @@ const transitionViewport = readFileSync(
 const capsuleStyles = readFileSync(resolve(root, 'src/components/CapsuleStyles.css'), 'utf8');
 const insertMotion = readFileSync(resolve(root, 'src/lib/insertTextAnimation.ts'), 'utf8');
 const themeSection = readFileSync(resolve(root, 'src/pages/settings/ThemeSection.tsx'), 'utf8');
-const languageSection = readFileSync(resolve(root, 'src/pages/settings/LanguageSection.tsx'), 'utf8');
+const languageSection = readFileSync(
+  resolve(root, 'src/pages/settings/LanguageSection.tsx'),
+  'utf8',
+);
 const recordingSection = readFileSync(
   resolve(root, 'src/pages/settings/RecordingInputSection.tsx'),
   'utf8',
@@ -34,8 +37,13 @@ assert.match(
 );
 assert.match(
   capsuleStyles,
-  /\.ol-live-transcript-pill[\s\S]*?clip-path: inset\(0 round 999px\)/,
-  'streaming transcript pill must clip its full rounded shell',
+  /\.ol-live-transcript-pill\s*\{[^}]*border-radius: 999px;[^}]*overflow: hidden;[^}]*clip-path: inset\(0 round 999px\);/,
+  'streaming transcript pill must retain its original capsule shape',
+);
+assert.match(
+  capsuleStyles,
+  /\.ol-live-transcript-track\s*\{[^}]*border-radius: 999px;[^}]*clip-path: inset\(0 round 999px\);/,
+  'streaming transcript text track must retain its original capsule clipping',
 );
 assert.match(
   capsuleStyles,

@@ -249,7 +249,7 @@ export function CustomSyncServerSection() {
     width: '100%',
     boxSizing: 'border-box' as const,
     border: '1px solid var(--ol-line-strong)',
-    borderRadius: 9,
+    borderRadius: 'var(--ol-r-md)',
     background: 'var(--ol-control-solid)',
     color: 'var(--ol-ink)',
     padding: '10px 12px',
@@ -1098,7 +1098,7 @@ function ProtocolWarning({
           gap: 16,
           padding: 18,
           border: '1px solid var(--ol-line)',
-          borderRadius: 14,
+          borderRadius: 'var(--ol-r-lg)',
           background: 'var(--ol-surface-2)',
         }}
       >
@@ -1159,7 +1159,7 @@ function PasswordForm({
     width: '100%',
     boxSizing: 'border-box' as const,
     border: '1px solid var(--ol-line-strong)',
-    borderRadius: 9,
+    borderRadius: 'var(--ol-r-md)',
     background: 'var(--ol-control-solid)',
     color: 'var(--ol-ink)',
     padding: '10px 12px',
@@ -1250,7 +1250,7 @@ function PasswordForm({
         disabled={!valid || busy}
         style={{
           padding: '10px 14px',
-          borderRadius: 9,
+          borderRadius: 'var(--ol-r-md)',
           background: 'var(--ol-primary-solid-bg)',
           color: 'var(--ol-primary-solid-ink)',
           fontWeight: 'var(--ol-font-weight-semibold)',
@@ -1352,7 +1352,11 @@ function RestoreReview({
                 <fieldset
                   key={conflict.id}
                   disabled={busy}
-                  style={{ border: '1px solid var(--ol-line)', borderRadius: 10, padding: 12 }}
+                  style={{
+                    border: '1px solid var(--ol-line)',
+                    borderRadius: 'var(--ol-r-md)',
+                    padding: 12,
+                  }}
                 >
                   <legend>
                     {t('cloudSyncE2ee.conflictItem', {
