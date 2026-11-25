@@ -596,7 +596,7 @@ mod tests {
             assert!(web_artifact(&page.replace(".apk.sig", ".apk.unsigned"), tag, arch).is_none());
             let mut indexed = release.clone();
             indexed["assets"][1] = json!({"name":super::super::signature_index::NAME,
-                "browser_download_url":format!("https://github.com/Open-Less/openless/releases/download/{tag}/updater-signatures.json")});
+                "browser_download_url":format!("https://github.com/dandibbert/openless/releases/download/{tag}/updater-signatures.json")});
             assert!(api_artifact(&indexed, arch)
                 .unwrap()
                 .2
