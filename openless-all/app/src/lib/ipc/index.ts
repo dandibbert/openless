@@ -64,15 +64,14 @@ export {
 } from './channels';
 
 // history
+export { listHistory, getActivityStats } from './history';
 export {
-  listHistory,
   deleteHistoryEntry,
   clearHistory,
-  getActivityStats,
   readAudioRecording,
   retranscribeRecording,
   applyQuickNoteRepolish,
-} from './history';
+} from '../../api/history';
 
 // vocab
 export {
@@ -164,24 +163,6 @@ export {
   isWaylandCliMode,
 } from './devices';
 
-// qa
-export {
-  getQaHotkeyLabel,
-  setQaHotkey,
-  qaWindowDismiss,
-  qaWindowSetExpanded,
-  qaGetSnapshot,
-  qaToggleRecording,
-  qaSubmitText,
-  qaSetEditInstructionMode,
-} from './qa';
-
-export {
-  getSelectionPolishPreview,
-  confirmSelectionPolishPreview,
-  cancelSelectionPolishPreview,
-} from './selection-polish-preview';
-
 export {
   getSelectionVoiceIntentPrompt,
   confirmSelectionVoiceIntentPrompt,
@@ -215,6 +196,7 @@ export {
   fetchLatestBetaRelease,
   appCheckUpdateWithChannel,
   appDownloadAndInstallAndroidUpdate,
+  appUpdateGithubFallback,
 } from './updater';
 
 // remote-server

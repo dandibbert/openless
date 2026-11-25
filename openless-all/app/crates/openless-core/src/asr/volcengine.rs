@@ -326,7 +326,7 @@ impl VolcengineStreamingASR {
                     break;
                 }
                 if pending_for_worker.fetch_sub(1, Ordering::SeqCst) == 1 {
-                    notify_for_worker.notify_waiters();
+                    notify_for_worker.notify_one();
                 }
             }
         }));
@@ -710,16 +710,10 @@ impl VolcengineStreamingASR {
         };
 
         if parsed.message_type == Some(MessageType::ErrorMessage) {
-            let body = String::from_utf8_lossy(&parsed.payload).to_string();
             let code = parsed.error_code.unwrap_or(0);
-            log::error!(
-                "[asr] error frame code={} body={}",
-                code,
-                body.chars().take(200).collect::<String>()
-            );
+            log::error!("[asr] Volcengine error frame code={code}");
             self.signal_error(VolcengineASRError::ConnectionFailed(format!(
-                "ASR error {}: {}",
-                code, body
+                "Volcengine ASR error {code}"
             )));
             self.state.lock().is_connected = false;
             *self.audio_tx.lock() = None;
@@ -728,13 +722,6 @@ impl VolcengineStreamingASR {
 
         if parsed.message_type != Some(MessageType::FullServerResponse) {
             return true;
-        }
-
-        if let Ok(payload_str) = std::str::from_utf8(&parsed.payload) {
-            log::info!(
-                "[asr] server JSON: {}",
-                payload_str.chars().take(400).collect::<String>()
-            );
         }
 
         let json: Value = match serde_json::from_slice(&parsed.payload) {
@@ -917,7 +904,7 @@ impl AudioConsumer for VolcengineStreamingASR {
                 // The worker already exited (cancel / error path took audio_tx).
                 // Undo the increment so send_last_frame's wait can reach 0.
                 if self.pending_sends.fetch_sub(1, Ordering::SeqCst) == 1 {
-                    self.send_done.notify_waiters();
+                    self.send_done.notify_one();
                 }
                 log::warn!("[asr] audio queue closed; dropping subsequent frames");
                 return;
@@ -1077,6 +1064,44 @@ mod tests {
             assert!(asr.handle_frame(&bytes));
         }
         sink.assert_snapshots(&["你", "你好", "您好", "您好。世界"]);
+    }
+
+    #[test]
+    fn simulated_two_minute_stream_keeps_routing_after_definite_segments() {
+        let asr = VolcengineStreamingASR::new(
+            VolcengineCredentials {
+                service: VolcengineService::Standard,
+                auth_mode: VolcengineAuthMode::AppIdToken,
+                app_id: "test".into(),
+                access_token: "test".into(),
+                resource_id: VolcengineCredentials::default_resource_id().into(),
+            },
+            Vec::new(),
+        );
+        let sink = Arc::new(super::super::TranscriptCapture::default());
+        asr.set_partial_sink(sink.clone());
+        let mut snapshots = Vec::new();
+        for packet in 1..=650 {
+            let text = "段".repeat(packet);
+            let payload = serde_json::to_vec(&json!({
+                "audio_info": { "duration": 200 * packet },
+                "result": {
+                    "text": text,
+                    "utterances": [{ "text": text, "definite": packet % 20 == 0 }],
+                },
+            })).unwrap();
+            let bytes = frame::build(
+                MessageType::FullServerResponse,
+                Flags::PositiveSequence,
+                Serialization::Json,
+                &payload,
+                Some(packet as i32),
+            );
+            assert!(asr.handle_frame(&bytes));
+            snapshots.push(text);
+        }
+        let expected = snapshots.iter().map(String::as_str).collect::<Vec<_>>();
+        sink.assert_snapshots(&expected);
     }
 
     #[test]
