@@ -246,6 +246,7 @@ macro_rules! app_invoke_handler_desktop {
             native_audio_cue::play_native_audio_cue,
             #[cfg(target_os = "macos")]
             native_audio_cue::stop_native_audio_cue,
+            #[cfg(target_os = "macos")]
             main_window_frame_ready,
             get_capsule_auxiliary_snapshot,
             commands::get_capsule_snapshot,
