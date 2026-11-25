@@ -19,10 +19,11 @@ const repositoryReferences = [
   'openless-all/app/src-tauri/src/commands/mod.rs',
   'openless-all/app/src-tauri/src/commands/settings.rs',
   'openless-all/app/src-tauri/src/update_source.rs',
+  'openless-all/app/src-tauri/src/update_source/android.rs',
   'openless-all/app/src-tauri/tauri.conf.json',
   'openless-all/app/src/components/AutoUpdate.tsx',
-  'openless-all/app/src/components/SettingsModal.tsx',
-  'openless-all/app/src/pages/settings/AboutSection.tsx',
+  'openless-all/app/src/features/settings/shell/SettingsModal.tsx',
+  'openless-all/app/src/features/settings/sections/AboutSection.tsx',
   'openless-all/app/scripts/write-updater-manifest.mjs',
 ];
 
@@ -45,14 +46,21 @@ assert(
 
 // This fork publishes update manifests to its own GitHub Releases. Protect the
 // fork against silently switching users to the upstream project's update CDN.
-const updateSource = await readFile(
-  join(repoRoot, 'openless-all/app/src-tauri/src/update_source.rs'),
-  'utf8',
-);
-assert(
-  updateSource.includes(currentRepo),
-  'update_source.rs must use the current fork',
-);
+for (const relativePath of [
+  'openless-all/app/src-tauri/src/update_source.rs',
+  'openless-all/app/src-tauri/src/update_source/android.rs',
+]) {
+  const updateSource = await readFile(join(repoRoot, relativePath), 'utf8');
+  assert(updateSource.includes(currentRepo), `${relativePath} must use the current fork`);
+  assert(
+    !updateSource.includes('api.github.com/repos/Open-Less/openless'),
+    `${relativePath} must not query upstream GitHub Releases`,
+  );
+  assert(
+    !updateSource.includes('Some("dl.aeoform.com")'),
+    `${relativePath} must not allowlist the upstream CDN`,
+  );
+}
 for (const endpoint of updaterEndpoints) {
   assert(
     endpoint.includes(currentRepo) && endpoint.includes('/releases/latest/download/'),

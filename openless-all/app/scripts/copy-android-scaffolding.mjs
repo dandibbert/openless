@@ -87,6 +87,7 @@ const KOTLIN_FILES = [
   'OpenLessBackendWarmupActivity.kt',
   'OpenLessClipboardHistory.kt',
   'CloudNoteDelivery.kt',
+  'OpenLessNativeNotice.kt',
   'OpenLessKeyboardSettingsActivity.kt',
   'OpenLessLocalMigrationActivity.kt',
   'OpenLessProcessRestartStats.kt',
@@ -117,6 +118,7 @@ const KOTLIN_TEST_FILES = [
   'OpenLessAccessibilityComponentIdsTest.kt',
 ];
 const KOTLIN_ANDROID_TEST_FILES = [
+  'OpenLessRuntimeServiceInstrumentedTest.kt',
   'OpenLessClipboardHistoryInstrumentedTest.kt',
   'OpenLessCredentialVaultInstrumentedTest.kt',
   'ImeLearningMigrationTest.kt',
@@ -386,7 +388,11 @@ function ensureInstrumentationRunner(dryRun) {
 
 /** CI copies Kotlin without enabling the backend application/services manifest. */
 export function mergeKeyboardSettingsDebugActivity(manifestXml) {
-  if (/android:name=["'](?:com\.openless\.app\.|\.)OpenLessKeyboardSettingsActivity["']/.test(manifestXml)) {
+  if (
+    /android:name=["'](?:com\.openless\.app\.|\.)OpenLessKeyboardSettingsActivity["']/.test(
+      manifestXml,
+    )
+  ) {
     return { content: manifestXml, changed: false };
   }
   const activity = `        <activity
@@ -396,22 +402,50 @@ export function mergeKeyboardSettingsDebugActivity(manifestXml) {
             android:theme="@style/Theme.openless" />`;
   let content;
   if (/<application\b[^>]*\/>/.test(manifestXml)) {
-    content = manifestXml.replace(/<application\b([^>]*)\/>/, `<application$1>\n${activity}\n    </application>`);
+    content = manifestXml.replace(
+      /<application\b([^>]*)\/>/,
+      `<application$1>\n${activity}\n    </application>`,
+    );
   } else if (manifestXml.includes('</application>')) {
     content = manifestXml.replace('</application>', `${activity}\n    </application>`);
   } else if (manifestXml.includes('</manifest>')) {
-    content = manifestXml.replace('</manifest>', `    <application>\n${activity}\n    </application>\n</manifest>`);
+    content = manifestXml.replace(
+      '</manifest>',
+      `    <application>\n${activity}\n    </application>\n</manifest>`,
+    );
   } else {
     throw new Error('Debug manifest is missing </manifest>');
   }
   return { content, changed: true };
 }
 
+/** Register only the runtime under test, not the Rust-backed Application/overlay/IME. */
+export function mergeRuntimeServiceDebugManifest(manifestXml) {
+  let content = mergeKeyboardSettingsDebugActivity(manifestXml).content;
+  if (!/android:name=["'](?:com\.openless\.app\.|\.)OpenLessRuntimeService["']/.test(content)) {
+    const service = `        <service
+            android:name="com.openless.app.OpenLessRuntimeService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the IME runtime and user-initiated ChatGPT authorization callback available while the user is in another app." />
+        </service>`;
+    content = content.replace('</application>', `${service}\n    </application>`);
+  }
+  for (const permission of ['FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_SPECIAL_USE', 'POST_NOTIFICATIONS']) {
+    if (!content.includes(`android.permission.${permission}"`) && !content.includes(`android.permission.${permission}'`)) {
+      content = content.replace(/<application\b/, `<uses-permission android:name="android.permission.${permission}" />\n    <application`);
+    }
+  }
+  return { content, changed: content !== manifestXml };
+}
+
 function ensureKeyboardSettingsDebugActivity(dryRun) {
   const existing = existsSync(androidDebugManifest)
     ? readFileSync(androidDebugManifest, 'utf8')
     : '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n</manifest>\n';
-  const result = mergeKeyboardSettingsDebugActivity(existing);
+  const result = mergeRuntimeServiceDebugManifest(existing);
   if (!result.changed) return;
   if (dryRun) {
     console.log(`[dry-run] Would register keyboard settings in ${androidDebugManifest}`);
@@ -419,7 +453,7 @@ function ensureKeyboardSettingsDebugActivity(dryRun) {
   }
   ensureDir(dirname(androidDebugManifest), false);
   writeFileSync(androidDebugManifest, result.content, 'utf8');
-  console.log(`Registered keyboard settings in ${androidDebugManifest}`);
+  console.log(`Registered keyboard settings and runtime lifecycle test service in ${androidDebugManifest}`);
 }
 
 function ensureMainActivityOpen(dryRun) {

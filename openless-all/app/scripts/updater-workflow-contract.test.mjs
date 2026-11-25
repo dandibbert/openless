@@ -15,10 +15,14 @@ assert(
   manifest.if.includes("env.OPENLESS_RELEASE_IS_TAG == 'true'"),
   'branch builds must not generate release manifests',
 );
-const publish = steps.find((step) => step.name === 'Create / update release');
+const publish = release.jobs.publish.steps.find((step) => step.name === 'Create / update release');
 assert.equal(publish.with.draft, true, 'publishing to clients remains an administrator decision');
-assert(publish.with.files.includes('/latest-*.json'));
-assert(publish.with.files.includes('/*.app.tar.gz.sig'));
+assert.equal(publish.with.files.trim(), 'release-files/*');
+const publishStage = release.jobs.publish.steps.find(
+  (step) => step.name === 'Stage release files',
+);
+assert.match(publishStage.run, /latest-\*\.json/);
+assert.match(publishStage.run, /\*\.app\.tar\.gz\.sig/);
 const bootstrap = workflow('test-macos-audio-fix.yml');
 assert.deepEqual(bootstrap.on.workflow_dispatch.inputs.macos_runner.options, [
   'macos-latest',
