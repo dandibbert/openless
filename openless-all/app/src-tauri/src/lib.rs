@@ -51,6 +51,8 @@ mod native_audio_cue;
 #[cfg(not(mobile))]
 mod native_capsule;
 mod qa_adapter;
+mod recording_companion;
+pub(crate) use recording_companion::ask_anything_available;
 mod tauri_coordinator_host;
 // 托盘麦克风设备变更监听：macOS CoreAudio / Windows MMDevice 原生通知（空闲零唤醒），
 // 仅桌面端。详见 issue #470。
