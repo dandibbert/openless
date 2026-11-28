@@ -185,7 +185,7 @@ tree = waitFor("tools-expanded") {
         || button($0, labels: ["Ask", "随便问"]) != nil
 }
 if let ask = button(tree, labels: ["Ask", "随便问"]) {
-    guard !ask.enabled else { finish("FAIL", "Ask_not_disabled") }
+    guard ask.enabled == false else { finish("FAIL", "Ask_not_disabled") }
     fields["ask"] = "AXEnabled=false"
 } else {
     fields["ask"] = "removed_from_sidebar"
