@@ -35,7 +35,8 @@ assert.equal(
 const testBuild = bootstrap.jobs['macos-arm64'].steps;
 assert(testBuild.some((step) => step.run === 'node scripts/verify-updater-signing.mjs'));
 assert(
-  testBuild.find((step) => step.run === 'bash scripts/build-mac.sh').env.TAURI_SIGNING_PRIVATE_KEY,
+  testBuild.find((step) => step.run === 'bash ../macos/scripts/build-mac.sh').env
+    .TAURI_SIGNING_PRIVATE_KEY,
 );
 const stage = testBuild.find((step) => step.name === 'Verify and stage updater manifests');
 assert.equal(stage.env.OPENLESS_UPDATE_TARGET, 'darwin');

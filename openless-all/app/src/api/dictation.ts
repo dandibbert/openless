@@ -1,6 +1,9 @@
 import type {
   BackendEvent,
   CapsulePayload,
+  CapsuleStyleMenuIdentity,
+  CapsuleStyleMenuKey,
+  CapsuleStyleMenuRequest,
   InsertFallbackCardPayload,
   PendingCorrection,
   UserPreferences,
@@ -21,16 +24,17 @@ export function reportMainCaptionTrace(sessionId: string, sequence: number, stag
   return invokeOrPreview<void>('report_main_caption_trace', { sessionId, sequence, stage }, () => {});
 }
 
+export interface CapsuleProcessingJob {
+  sessionId: string;
+  translationActive?: boolean;
+}
+
 export function getCapsuleAuxiliarySnapshot() {
   return invokeOrPreview<{
     suggestions: PendingCorrection[];
     fallback: InsertFallbackCardPayload | null;
-    processing: { sessionId: string; translationActive?: boolean }[];
-  }>('get_capsule_auxiliary_snapshot', undefined, () => ({
-    suggestions: [],
-    fallback: null,
-    processing: [],
-  }));
+    processing: CapsuleProcessingJob[];
+  }>('get_capsule_auxiliary_snapshot', undefined, () => ({ suggestions: [], fallback: null, processing: [] }));
 }
 
 export function createCapsuleSubscriptions() {
@@ -40,7 +44,13 @@ export function createCapsuleSubscriptions() {
     dispose: events.dispose,
     state: (onPayload: (payload: CapsulePayload) => void) =>
       events.listen('capsule:state', onPayload, 'window'),
-    jobs: (onPayload: (payload: { sessionId: string; translationActive?: boolean }[]) => void) =>
+    styleMenuRequests: (onPayload: (payload: CapsuleStyleMenuRequest) => void) =>
+      events.listen('capsule:style-menu-request', onPayload, 'window'),
+    styleMenuKeys: (onPayload: (payload: CapsuleStyleMenuKey) => void) =>
+      events.listen('capsule:style-menu-key', onPayload, 'window'),
+    styleMenuClosed: (onPayload: (payload: CapsuleStyleMenuIdentity) => void) =>
+      events.listen('capsule:style-menu-closed', onPayload, 'window'),
+    jobs: (onPayload: (payload: CapsuleProcessingJob[]) => void) =>
       events.listen('dictation:jobs', onPayload, 'app'),
     transcript: (onPayload: (payload: BackendEvent) => void) =>
       events.listen('backend:event', onPayload, 'app'),
