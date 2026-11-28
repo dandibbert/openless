@@ -54,6 +54,8 @@ pub struct SonioxCredentials {
     pub model: String,
     /// 用户词典启用短语，映射为 Soniox `context.terms`（领域/专有名词偏置）。
     pub terms: Vec<String>,
+    /// 用户工作语言（原生名/代码/别名），规范化并去重后映射为 Soniox `language_hints`。
+    pub language_hints: Vec<String>,
 }
 
 impl SonioxCredentials {
@@ -270,6 +272,7 @@ impl SonioxStreamingASR {
                 self.credentials.api_key.trim(),
                 &self.credentials.normalized_model(),
                 &self.credentials.terms,
+                &self.credentials.language_hints,
             ),
         )
         .await
@@ -605,14 +608,35 @@ fn drain_audio_chunks(buffer: &mut Vec<u8>) -> Vec<Vec<u8>> {
     super::streaming::drain_chunks(buffer, TARGET_AUDIO_CHUNK_BYTES)
 }
 
+/// 将用户配置的工作语言列表映射为去重后的 Soniox ISO 639-1 语言码。
+/// 无法识别或空白的条目会被忽略；结果保留首次出现顺序。
+pub fn normalize_language_hints(languages: &[String]) -> Vec<String> {
+    let mut hints = Vec::new();
+    for language in languages {
+        if let Some(code) = crate::language_catalog::asr_language_code(language) {
+            if !hints.contains(&code) {
+                hints.push(code);
+            }
+        }
+    }
+    hints
+}
+
 /// 构造 Soniox 初始配置消息。
 ///
 /// - `audio_format: "pcm_s16le"` + `sample_rate: 16000` + `num_channels: 1`
 ///   直接匹配 OpenLess recorder 的原始输出，无需转码容器。
 /// - `enable_endpoint_detection: true`：说话人停顿时让服务端 finalize 当前
 ///   词汇，使最终文本更干净（与 app 其它流式 provider 的收尾语义对齐）。
+/// - `language_hints`：将用户工作语言经 `language_catalog::asr_language_code`
+///   映射并去重后传入；未配置有效语言时省略该字段以保留自动识别。
 /// - `context.terms`：把用户词典启用的短语作为领域/专有名词偏置喂给模型。
-pub fn build_config_message(api_key: &str, model: &str, terms: &[String]) -> String {
+pub fn build_config_message(
+    api_key: &str,
+    model: &str,
+    terms: &[String],
+    language_hints: &[String],
+) -> String {
     let mut config = json!({
         "api_key": api_key,
         "model": model,
@@ -621,6 +645,11 @@ pub fn build_config_message(api_key: &str, model: &str, terms: &[String]) -> Str
         "num_channels": 1,
         "enable_endpoint_detection": true,
     });
+
+    let language_hints = normalize_language_hints(language_hints);
+    if !language_hints.is_empty() {
+        config["language_hints"] = json!(language_hints);
+    }
 
     let terms: Vec<&str> = terms
         .iter()
@@ -679,6 +708,7 @@ mod tests {
             endpoint: String::new(),
             model: String::new(),
             terms: Vec::new(),
+            language_hints: Vec::new(),
         }
     }
 
@@ -718,7 +748,7 @@ mod tests {
 
     #[test]
     fn config_message_has_required_fields() {
-        let msg = build_config_message("sk-test", "stt-rt-v5", &[]);
+        let msg = build_config_message("sk-test", "stt-rt-v5", &[], &[]);
         let v: Value = serde_json::from_str(&msg).unwrap();
         assert_eq!(v["api_key"], "sk-test");
         assert_eq!(v["model"], "stt-rt-v5");
@@ -726,6 +756,10 @@ mod tests {
         assert_eq!(v["sample_rate"], 16_000);
         assert_eq!(v["num_channels"], 1);
         assert_eq!(v["enable_endpoint_detection"], true);
+        assert!(
+            v.get("language_hints").is_none(),
+            "no working languages -> omit language_hints for auto detection"
+        );
         assert!(v.get("context").is_none(), "no terms -> no context block");
     }
 
@@ -736,13 +770,35 @@ mod tests {
             "  ".to_string(),
             "Zyrtec".to_string(),
         ];
-        let msg = build_config_message("k", "stt-rt-v5", &terms);
+        let msg = build_config_message("k", "stt-rt-v5", &terms, &[]);
         let v: Value = serde_json::from_str(&msg).unwrap();
         let context_terms = v["context"]["terms"].as_array().unwrap();
         // 空白项被过滤
         assert_eq!(context_terms.len(), 2);
         assert_eq!(context_terms[0], "Celebrex");
         assert_eq!(context_terms[1], "Zyrtec");
+    }
+
+    #[test]
+    fn config_message_maps_and_deduplicates_language_hints() {
+        let languages = vec![
+            "简体中文".to_string(),
+            "繁体中文".to_string(),
+            "zh-CN".to_string(),
+            "English".to_string(),
+            "unknown-lang".to_string(),
+            "  ".to_string(),
+            "日本語".to_string(),
+        ];
+        let msg = build_config_message("k", "stt-rt-v6", &[], &languages);
+        let v: Value = serde_json::from_str(&msg).unwrap();
+        assert_eq!(v["language_hints"], json!(["zh", "en", "ja"]));
+
+        // 仅含无效/空白语言时同样省略 language_hints，保留自动识别。
+        let invalid_only = vec!["".to_string(), "  ".to_string(), "Klingon".to_string()];
+        let msg_invalid = build_config_message("k", "stt-rt-v6", &[], &invalid_only);
+        let v_invalid: Value = serde_json::from_str(&msg_invalid).unwrap();
+        assert!(v_invalid.get("language_hints").is_none());
     }
 
     #[tokio::test]
@@ -836,6 +892,7 @@ mod tests {
             endpoint: DEFAULT_ENDPOINT.to_string(),
             model: DEFAULT_MODEL.to_string(),
             terms: Vec::new(),
+            language_hints: Vec::new(),
         };
         let asr = std::sync::Arc::new(SonioxStreamingASR::new(creds));
         // open_session 需要 tokio runtime；这里只断言 api_key 校验路径，
@@ -865,6 +922,7 @@ mod tests {
             endpoint: "  ".into(),
             model: "  ".into(),
             terms: Vec::new(),
+            language_hints: Vec::new(),
         };
         assert_eq!(c.normalized_endpoint(), DEFAULT_ENDPOINT);
         assert_eq!(c.normalized_model(), DEFAULT_MODEL);

@@ -174,12 +174,22 @@ press(button(tree, labels: ["Explore first", "先去看看"])!, "Explore first")
 tree = waitFor("main-overview") { button($0, labels: ["Settings", "设置"]) != nil }
 fields["navigation"] = "onboarding_to_main"
 capture("main-overview")
-// Expand the existing Tools group to expose the disabled Ask entry.
+// Expand the existing Tools group and verify its children render.
+// Beta.2 noask builds exposed a disabled Ask entry under Tools; later builds
+// removed Ask from the Tools sidebar completely.
 guard let tools = button(tree, labels: ["Tools", "工具"]) else { finish("BLOCKED", "tools_button_missing") }
 press(tools, "Tools")
-tree = waitFor("ask-visible") { button($0, labels: ["Ask", "随便问"]) != nil }
-guard button(tree, labels: ["Ask", "随便问"])?.enabled == false else { finish("FAIL", "Ask_not_disabled") }
-fields["ask"] = "AXEnabled=false"
+tree = waitFor("tools-expanded") {
+    button($0, labels: ["Corrections", "纠正规则"]) != nil
+        || button($0, labels: ["Translation", "翻译"]) != nil
+        || button($0, labels: ["Ask", "随便问"]) != nil
+}
+if let ask = button(tree, labels: ["Ask", "随便问"]) {
+    guard !ask.enabled else { finish("FAIL", "Ask_not_disabled") }
+    fields["ask"] = "AXEnabled=false"
+} else {
+    fields["ask"] = "removed_from_sidebar"
+}
 capture("main-ask-disabled")
 guard let settings = button(tree, labels: ["Settings", "设置"]) else { finish("BLOCKED", "settings_button_missing") }
 press(settings, "Settings")
