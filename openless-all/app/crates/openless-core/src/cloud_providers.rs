@@ -816,12 +816,14 @@ async fn build_cloud_transcription_session(
                 ));
             }
             let terms = context.polish.hotwords.clone();
+            let language_hints = context.polish.working_languages.clone();
             let provider = Arc::new(SonioxStreamingASR::with_task_spawner(
                 SonioxCredentials {
                     api_key,
                     endpoint,
                     model: effective_model.clone(),
                     terms,
+                    language_hints,
                 },
                 Arc::clone(&task_spawner),
             ));
@@ -4901,5 +4903,102 @@ mod tests {
         .await
         .unwrap_err();
         assert!(empty_incomplete.retryable);
+    }
+
+    #[tokio::test]
+    async fn soniox_session_forwards_working_languages_as_language_hints() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+
+        struct NoopTextStream;
+        impl TextStreamSink for NoopTextStream {
+            fn publish(&self, _chunk: TextStreamChunk) -> Result<(), BackendError> {
+                Ok(())
+            }
+        }
+
+        async fn run_case(working_languages: Vec<String>) -> serde_json::Value {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+                let Message::Text(config_text) = ws.next().await.unwrap().unwrap() else {
+                    panic!("expected Soniox config JSON as first frame");
+                };
+                let config: serde_json::Value = serde_json::from_str(&config_text).unwrap();
+                while let Some(Ok(frame)) = ws.next().await {
+                    if matches!(frame, Message::Text(ref t) if t.is_empty()) {
+                        break;
+                    }
+                }
+                ws.send(Message::Text(
+                    serde_json::json!({
+                        "tokens": [{ "text": "测试成功", "is_final": true }],
+                        "finished": true
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .unwrap();
+                config
+            });
+
+            let store = Arc::new(InMemoryCredentialStore::default());
+            write_channel_secret(
+                store.as_ref(),
+                CredentialNamespace::Asr,
+                crate::asr::soniox::PROVIDER_ID,
+                ASR_API_KEY_ACCOUNT,
+                "soniox-test-key",
+            )
+            .await;
+            write_channel_secret(
+                store.as_ref(),
+                CredentialNamespace::Asr,
+                crate::asr::soniox::PROVIDER_ID,
+                ASR_ENDPOINT_ACCOUNT,
+                &endpoint,
+            )
+            .await;
+            let engine = SharedCloudTranscriptionEngine::new(store);
+            let mut asr = ProviderInvocation::new(
+                crate::asr::soniox::PROVIDER_ID,
+                crate::asr::soniox::PROVIDER_ID,
+            );
+            asr.model = Some("stt-rt-v6".to_string());
+            let mut context = DictationContext {
+                asr,
+                ..DictationContext::default()
+            };
+            context.polish.working_languages = working_languages;
+
+            let session = engine
+                .start(SessionId::new(), Arc::new(context), Arc::new(NoopTextStream))
+                .await
+                .unwrap();
+            session.consume_pcm_chunk(&vec![0u8; crate::asr::soniox::TARGET_AUDIO_CHUNK_BYTES]);
+            let output = session.finish().await.unwrap();
+            assert_eq!(output.text, "测试成功");
+            server.await.unwrap()
+        }
+
+        let with_hints = run_case(vec![
+            "简体中文".to_string(),
+            "繁体中文".to_string(),
+            "English".to_string(),
+        ])
+        .await;
+        assert_eq!(
+            with_hints["language_hints"],
+            serde_json::json!(["zh", "en"])
+        );
+
+        let without_hints = run_case(Vec::new()).await;
+        assert!(
+            without_hints.get("language_hints").is_none(),
+            "empty working_languages must omit language_hints to keep Soniox auto-detection"
+        );
     }
 }
