@@ -173,13 +173,13 @@ impl SearchTool for Search {
     }
 }
 
-type StoredPdfPages = Mutex<HashMap<Uuid, (Uuid, Vec<(u32, Arc<str>)>)>>;
+type PdfPages = HashMap<Uuid, (Uuid, Vec<(u32, Arc<str>)>)>;
 
 #[derive(Default)]
 struct Attachments(
     Mutex<HashMap<Uuid, (Uuid, AskImage)>>,
     Mutex<HashMap<Uuid, (Uuid, Arc<str>)>>,
-    StoredPdfPages,
+    Mutex<PdfPages>,
 );
 
 impl AttachmentReader for Attachments {

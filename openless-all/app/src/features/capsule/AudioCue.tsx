@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { createCapsuleSubscriptions } from '../../api/dictation';
 import { getSettings } from '../../api/preferences';
 import { getRuntimeEnvironment } from '../../runtime/environment';
-import { playRecordStartCue, primeAudioCue, stopAudioCue } from '../../lib/audioCue';
+import { disposeAudioCue, playRecordStartCue, stopAudioCue } from '../../lib/audioCue';
 import type { CapsuleState } from '../../api/contracts';
 
 export function AudioCueListener() {
@@ -24,12 +24,21 @@ export function AudioCueListener() {
       if ((await events.label()) !== 'capsule' || disposed) return;
       owned = true;
       prevStateRef.current = 'idle';
-      // Never start WebKit's output client just to prime the start cue on macOS.
-      if (!macNativeCue) primeAudioCue();
       if (
         !(await events.preferences((next) => {
           preferenceRevision += 1;
-          if (next) audioCueEnabledRef.current = next.audioCueOnRecord !== false;
+          if (next) {
+            audioCueEnabledRef.current = next.audioCueOnRecord !== false;
+            if (!audioCueEnabledRef.current) {
+              if (macNativeCue) {
+                void import('@tauri-apps/api/core')
+                  .then(({ invoke }) => invoke('stop_native_audio_cue'))
+                  .catch(() => {});
+              } else {
+                disposeAudioCue();
+              }
+            }
+          }
         }))
       )
         return;
@@ -63,6 +72,15 @@ export function AudioCueListener() {
       const preferences = await getSettings();
       if (!disposed && observed === preferenceRevision) {
         audioCueEnabledRef.current = preferences.audioCueOnRecord !== false;
+        if (!audioCueEnabledRef.current) {
+          if (macNativeCue) {
+            void import('@tauri-apps/api/core')
+              .then(({ invoke }) => invoke('stop_native_audio_cue'))
+              .catch(() => {});
+          } else {
+            disposeAudioCue();
+          }
+        }
       }
     })().catch(() => {});
 
@@ -75,7 +93,7 @@ export function AudioCueListener() {
             .then(({ invoke }) => invoke('stop_native_audio_cue'))
             .catch(() => {});
         } else {
-          stopAudioCue();
+          disposeAudioCue();
         }
       }
     };

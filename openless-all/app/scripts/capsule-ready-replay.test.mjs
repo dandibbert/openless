@@ -47,6 +47,7 @@ function compileStandalone(relativePath) {
 }
 const auxiliaryEventsCode = compileStandalone('../src/runtime/windows/auxiliaryEvents.ts');
 const dictationEventsCode = compileStandalone('../src/api/dictation.ts');
+const outputStyleCode = compileStandalone('../src/features/capsule/capsuleOutputStyle.ts');
 
 function bindNativeAdapter(scope, tauri = true) {
   const runtime = {
@@ -71,6 +72,8 @@ vm.runInNewContext(
   compile(readFileSync(new URL('../src/lib/backendEvent.ts', import.meta.url), 'utf8')),
   backend,
 );
+const outputStyle = { exports: {} };
+vm.runInNewContext(outputStyleCode, outputStyle);
 const effectCode = compile(`globalThis.replayEffect = (${effect});`);
 const railSource = readFileSync(
   new URL('../src/features/capsule/LiveTranscriptPill.tsx', import.meta.url),
@@ -178,10 +181,11 @@ function mount({
   const writes = [];
   const warnings = [];
   const traceCalls = [];
-  const values = { setState: 'idle', setLocalAsrText: '' };
+  const values = { setState: 'idle', setLocalAsrText: '', setOutputStyle: null };
   let requests = 0;
   const scope = {
     ...backend.exports,
+    ...outputStyle.exports,
     isTauri: true,
     isTauriHost: () => true,
     capsuleStateFirstLogged: true,
@@ -250,6 +254,7 @@ function mount({
     'setMessage',
     'setLocalAsrText',
     'setTranslation',
+    'setOutputStyle',
     'setWarming',
     'setSelectionPolish',
     'setQa',
@@ -261,7 +266,8 @@ function mount({
     'setEnabled',
     'setFontSize',
   ]) {
-    scope[name] = (value) => {
+    scope[name] = (update) => {
+      const value = typeof update === 'function' ? update(values[name]) : update;
       values[name] = value;
       writes.push([name, value]);
     };
@@ -305,18 +311,27 @@ function transcript(view, sequence, text, sessionId = 'session') {
 
 // A lazy mirror replays a session whose starting event already happened.
 {
-  const view = mount({ snapshot: () => frame() });
-  await until(() => view.values.setState === 'recording');
+  const style = { skipAutoStyle: true, stylePackId: 'builtin.formal', stylePackName: 'Formal' };
+  const view = mount({ snapshot: () => frame(style) });
+  await until(
+    () => view.values.setOutputStyle?.packId === style.stylePackId || view.warnings.length > 0,
+  );
+  assert.equal(view.warnings.length, 0, view.warnings.map(([, error]) => String(error)).join('\n'));
+  assert.equal(view.values.setState, 'recording');
+  assert.equal(view.values.setOutputStyle.name, 'Formal');
   assert.equal(view.values.setLocalAsrText, 'existing text');
-  view.emit('capsule:state', { state: 'recording', sessionId: 'session' });
+  view.emit('capsule:state', { ...style, state: 'recording', sessionId: 'session' });
   assert.equal(view.values.setLocalAsrText, 'existing text');
   transcript(view, 11, 'updated text');
   assert.equal(view.values.setLocalAsrText, 'updated text');
   assert.deepEqual(view.traceCalls.at(-1), {
-    sequence: 11, before: 'existing text', after: 'updated text',
+    sequence: 11,
+    before: 'existing text',
+    after: 'updated text',
   });
   view.emit('capsule:state', { state: 'done', sessionId: 'session' });
   assert.equal(view.values.setLocalAsrText, '');
+  assert.equal(view.values.setOutputStyle, null);
   release(view);
 }
 
@@ -681,6 +696,7 @@ for (const { macNativeCue, label } of [
   let plays = 0;
   let primes = 0;
   let stops = 0;
+  let disposals = 0;
   let webAudioCalls = 0;
   const scope = {
     audioCueRuntimeEnabled: true,
@@ -699,6 +715,10 @@ for (const { macNativeCue, label } of [
     stopAudioCue: () => {
       webAudioCalls++;
       stops++;
+    },
+    disposeAudioCue: () => {
+      webAudioCalls++;
+      disposals++;
     },
     require(name) {
       if (name === '@tauri-apps/api/core')
@@ -726,11 +746,7 @@ for (const { macNativeCue, label } of [
   await tick();
   const primary = label === 'capsule';
   assert.equal(bus.size, primary ? 2 : 0, 'only the resident capsule may own cue subscriptions');
-  assert.equal(
-    primes,
-    primary && !macNativeCue ? 1 : 0,
-    'opening another WebView or macOS native cue must not prime Web Audio',
-  );
+  assert.equal(primes, 0, 'mounting any WebView must leave the output device closed');
   assert.equal(plays, 0, 'mounting cannot replay a recording edge');
   bus.emit('capsule-mirror-0', 'capsule:state', { state: 'recording' });
   assert.equal(plays, 0, 'a mirror event cannot play the primary capsule cue');
@@ -741,10 +757,26 @@ for (const { macNativeCue, label } of [
   bus.emit('capsule', 'capsule:state', { state: 'done' });
   await tick();
   assert.equal(stops, primary ? 1 : 0);
+  bus.emit('capsule', 'prefs:changed', { audioCueOnRecord: false });
+  await tick();
+  if (macNativeCue) {
+    assert.equal(stops, primary ? 2 : 0, 'disabling cues stops native output on macOS');
+  } else {
+    assert.equal(disposals, primary ? 1 : 0, 'disabling cues disposes the owned output');
+  }
+  bus.emit('capsule', 'capsule:state', { state: 'recording' });
+  await tick();
+  assert.equal(plays, primary ? 1 : 0, 'disabled cues cannot play on a new recording');
   cleanup();
   await tick();
   assert.equal(bus.size, 0);
-  assert.equal(webAudioCalls, primary && !macNativeCue ? 4 : 0);
+  if (macNativeCue) {
+    assert.equal(stops, primary ? 3 : 0, 'only the cue owner stops native output on unmount');
+    assert.equal(webAudioCalls, 0, 'macOS native cue must never call Web Audio');
+  } else {
+    assert.equal(disposals, primary ? 2 : 0, 'only the cue owner disposes output on unmount');
+    assert.equal(webAudioCalls, primary ? 4 : 0);
+  }
 }
 {
   const scope = {

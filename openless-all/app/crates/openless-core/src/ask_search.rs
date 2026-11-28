@@ -570,7 +570,8 @@ fn relevant_title(title: &str, query: &str) -> bool {
     let title = title.to_lowercase();
     let query = query.to_lowercase();
     let about_tools = ["web search settings", "enable web search", "怎么开启搜索", "如何启用搜索", "如何开通搜索"];
-    !(about_tools.iter().any(|cue| title.contains(cue)) && !about_tools.iter().any(|cue| query.contains(cue)))
+    !about_tools.iter().any(|cue| title.contains(cue))
+        || about_tools.iter().any(|cue| query.contains(cue))
 }
 
 fn budgeted_evidence(entries: Vec<SearchEvidence>, budget: usize) -> String {
